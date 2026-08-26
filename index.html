@@ -659,7 +659,7 @@ body.boot-ready #root{/* visible */}
 .media-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:.65rem}
 .media-card{border:1px solid color-mix(in oklab,var(--gold) 20%,transparent);border-radius:10px;overflow:hidden;background:var(--bg-inset);cursor:pointer;text-align:left;padding:0;display:flex;flex-direction:column}
 .media-card img{width:100%;aspect-ratio:1;object-fit:cover;display:block;background:#111}
-.media-card .mc-meta{padding:.4rem .45rem .5rem;font-size:.72rem;line-height:1.35}
+.media-card .mc-meta{padding:.4rem .45rem .5rem;font-size:.72rem;line-height:1.35}.media-card .img-lic{margin-top:.2rem;font-size:.68rem;line-height:1.25;word-break:break-word}
 .media-card .mc-meta em{display:block;font-style:italic;color:var(--ivory);font-size:.78rem}
 @media(max-width:768px){
   #root{height:auto;max-height:none;overflow:visible;min-height:100dvh}
@@ -763,9 +763,7 @@ const RANK_ORDER = ["clade","superfamily","family","subfamily","genus","species"
 const CLADE_ORDER = [
   "Podotremata",
   "Marine Heterotremata",
-  "Thoracotremata & True Freshwater Crab",
-  "Thoracotremata",
-  "True Freshwater Crab"
+  "Thoracotremata & True Freshwater Crab"
 ];
 const CLADE_FILTERS = CLADE_ORDER;
 function cladeSortKey(name){
@@ -781,6 +779,13 @@ function cladeSortKey(name){
     if(n===CLADE_ORDER[i]) return i;
   }
   return 50;
+}
+function orphanTaxa(){
+  return Object.values(S.taxa||{}).filter(t=>{
+    if(!t || t.rank==="clade") return false;
+    if(!t.parentId) return true;
+    return !S.taxa[t.parentId];
+  }).sort((a,b)=>(a.scientificName||"").localeCompare(b.scientificName||""));
 }
 function orderedClades(){
   return Object.values(S.taxa).filter(t=>t.rank==="clade")
@@ -839,6 +844,15 @@ let _prevTaxonId=null;
 let _bootRitualDone=false;
 const S = { ready:false, loading:true, session:null, profile:null, taxa:{}, revisions:[], lifeFilter:"all", entered:false, segment:"home", sidebarOpen:true, segOpen:true, notifOpen:false, notifTab:"mine", notifFilter:"all", notifications:[], unread:0, view:null, slide:0, slideGallery:"all", slideFs:false, slideAuto:true, slideFade:true, slideMs:4500, slideTimer:null, modal:null, toast:"", rankings:[], guestPw:DEFAULT_GUEST_PW, bannedWords:[], carrierIps:[], search:"", speciesPage:0, editLock:(function(){try{return localStorage.getItem("edit_lock")||"off";}catch(e){return "off";}})(), sfCladeFilter:"all", sectionFold:{}, dismissedNotifs:JSON.parse(localStorage.getItem("brachy_dismissed_notifs")||"[]"), chatMode:"public", chatPeer:null, chatMention:"", publicChatResetDays:7 };
 
+function linkify(text){
+  const s=String(text||"");
+  const e=esc(s);
+  return e.replace(/(https?:\/\/[^\s<]+)/g, (url)=>{
+    const clean=url.replace(/[.,;:!?)]+$/,"");
+    const trail=url.slice(clean.length);
+    return `<a href="${clean}" target="_blank" rel="noopener noreferrer" style="color:var(--gold-hi);text-decoration:underline">${clean}</a>${trail}`;
+  });
+}
 const esc = s => String(s??"").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
 const toast = m => {
   try{ sfx("success"); }catch(e){}
@@ -1873,6 +1887,7 @@ async function saveTaxon(taxon,summary){
   S.revisions=[{id:rev.id,taxonId:taxon.id,at:Date.now(),summary:rev.summary,editorName:rev.editor_name,editorIp:rev.editor_ip,editorUserId:rev.editor_user_id,snapshot:snap},...S.revisions].slice(0,200);
   await loadRankings();
   try{ playOpenRitual(); }catch(e){}
+  try{ ensureBgmPlaying(); }catch(e){}
 }
 function el(h){ const t=document.createElement("template"); t.innerHTML=h.trim(); return t.content.firstElementChild; }
 function jiggleEl(node){
@@ -1902,26 +1917,34 @@ function killBgmOnLeave(){
   }catch(e){}
 }
 document.addEventListener("visibilitychange", ()=>{
-  if(document.visibilityState==="hidden"){ try{ if(_bgmAudio) _bgmAudio.pause(); }catch(e){} }
+  if(document.visibilityState==="hidden"){
+    try{ if(_bgmAudio) _bgmAudio.pause(); }catch(e){}
+  } else if(document.visibilityState==="visible"){
+    try{ ensureBgmPlaying(); }catch(e){}
+  }
 });
+window.addEventListener("focus", ()=>{ try{ ensureBgmPlaying(); }catch(e){} });
+window.addEventListener("pageshow", ()=>{ try{ ensureBgmPlaying(); }catch(e){} });
 window.addEventListener("pagehide", killBgmOnLeave);
 window.addEventListener("beforeunload", killBgmOnLeave);
 function startBgmInternal(){
   try{
+    if(!_bgmOn) return;
     if(!_bgmAudio){
       _bgmAudio=new Audio(BGM_MP3_DATA);
       _bgmAudio.loop=true;
       _bgmAudio.preload="auto";
       _bgmAudio.volume=0.42;
     }
-    const p=_bgmAudio.play();
-    if(p&&p.catch) p.catch(()=>{ /* autoplay 차단 시 unlock 대기 */ });
+    if(_bgmAudio.paused){
+      const p=_bgmAudio.play();
+      if(p&&p.catch) p.catch(()=>{});
+    }
   }catch(e){ console.warn("bgm",e); }
 }
 function toggleBgm(force){
   if(typeof force==="boolean") _bgmOn=force;
   else _bgmOn=!_bgmOn;
-  /* bgmOn 세션만 유지 */
   if(_bgmOn){ startBgmInternal(); toast("배경음악 ON"); }
   else { stopBgmInternal(); toast("배경음악 OFF"); }
 }
@@ -2295,9 +2318,11 @@ function render(fromSchedule){
   } else { const l=el(`<button type="button" class="btn btn-gold">로그인</button>`); l.onclick=()=>{S.modal={type:"auth",mode:"login"};render();}; top.appendChild(l); }
   chrome.appendChild(top);
   // top search bar
-  const tsw=el(`<div class="top-search"><div class="top-search-wrap"><span class="search-icon" aria-hidden="true">⌕</span><input id="topq" type="search" placeholder="학명 · 국명 검색" value="${esc(S.search||"")}" autocomplete="off"/><div class="top-search-results" id="topqr"></div></div><button type="button" class="btn btn-line help-btn" id="helpBtn" title="사이트 안내">?</button></div>`);
+  const tsw=el(`<div class="top-search"><div class="top-search-wrap"><span class="search-icon" aria-hidden="true">⌕</span><input id="topq" type="search" placeholder="학명 · 국명 검색" value="${esc(S.search||"")}" autocomplete="off"/><div class="top-search-results" id="topqr"></div></div><button type="button" class="btn btn-line" id="addSpBtn" title="종 추가" style="white-space:nowrap;font-size:.78rem;padding:0 .55rem">종 추가하기</button><button type="button" class="btn btn-line help-btn" id="helpBtn" title="사이트 안내">?</button></div>`);
   const helpBtn=tsw.querySelector("#helpBtn");
   if(helpBtn) helpBtn.onclick=()=>{ S.modal={type:"help"}; render(); };
+  const addSpBtn=tsw.querySelector("#addSpBtn");
+  if(addSpBtn) addSpBtn.onclick=()=>{ if(!isLogged()){ S.modal={type:"auth"}; render(); return; } if(isBlocked()){ toast("차단된 계정입니다"); return; } if(!canWriteDocs()){ toast(editLockLabel()||"수정이 잠겨 있습니다"); return; } S.modal={type:"addSpeciesWizard", step:"clade", stack:[]}; render(); };
   const tqi=tsw.querySelector("#topq"); const tqr=tsw.querySelector("#topqr");
   const runTop=()=>{ const q=(tqi.value||"").trim().toLowerCase(); S.search=tqi.value; tqr.innerHTML=""; if(!q){ tqr.classList.remove("open"); return; }
     const hits=Object.values(S.taxa).filter(t=>`${t.scientificName} ${t.koreanName}`.toLowerCase().includes(q)).slice(0,14);
@@ -2861,7 +2886,8 @@ function viewSlides(){
         const card=el(`<button type="button" class="media-card">
           <img src="${esc(m.url)}" alt="" loading="lazy"/>
           <div class="mc-meta"><em>${esc(m.title)}</em>
-            <span class="muted">${esc(m.sub||m.kind)}${m.lic?" · "+esc(m.lic):""}</span>
+            <span class="muted">${esc(m.sub||m.kind)}</span>
+            ${m.lic?`<div class="img-lic">© ${esc(m.lic)}</div>`:`<div class="img-lic" style="opacity:.35">라이선스 미입력</div>`}
           </div>
         </button>`);
         card.onclick=()=>{
@@ -3037,7 +3063,7 @@ function viewChat(){
           const role=(live&&live.role)||"";
           const nick=formatStaffNick(name, role);
           const av=effectiveAvatar((live&&live.avatar_url)||m.avatar_url,m.user_id,name);
-          const body=esc(m.body||"");
+          const body=linkify(m.body||"");
           const imgOk=m.image_url && m.image_expires_at && new Date(m.image_expires_at)>new Date();
           const imgHtml=imgOk?`<img class="chat-img" src="${esc(m.image_url)}" alt="첨부" loading="lazy"/>`:"";
           const row=el(`<div class="chat-row"><img class="chat-av" src="${esc(av)}" alt=""/><div class="chat-bubble"><button type="button" class="chat-name">${nick.html}</button><div class="chat-text">${body.replace(/@([^\s,，]+)/g,'<span class="chat-at">@$1</span>')}</div>${imgHtml}</div></div>`);
@@ -3772,7 +3798,7 @@ function viewModal(){
         <label class="btn btn-line" style="width:100%;min-height:38px;cursor:pointer;display:grid;place-items:center;margin-bottom:.45rem">파일 선택<input id="tpf" type="file" accept="image/*" hidden/></label>
         <label class="field"><span>이미지 URL (http)</span><input id="tpu" placeholder="https://..." value=""/></label>
         <label class="field"><span>캡션</span><input id="tpc" value="${esc(tax.profileImageCaption||"")}"/></label>
-        <label class="field"><span>라이선스</span><input id="tpl" value="${esc(tax.profileImageLicense||"")}" placeholder="예: CC BY 4.0"/></label>
+        <label class="field"><span>라이선스</span><input id="tpl" value="${esc(tax.profileImageLicense||"")}" placeholder="예: 홍길동, CC BY-4.0"/></label>
         <button type="button" class="btn btn-ghost" id="tpClear" style="width:100%;margin-bottom:.5rem">사진 비우기</button>
         <div style="display:flex;gap:.5rem;justify-content:flex-end">
           <button class="btn btn-ghost" id="c">취소</button>
@@ -3867,7 +3893,8 @@ function viewModal(){
   else if(m.type==="add"){
     const parent=m.parent;
     const rank=m.rank||"species";
-    if(!parent){ modal.innerHTML=`<p>부모 분류가 없습니다</p><button class="btn btn-ghost" id="c">닫기</button>`; modal.querySelector("#c").onclick=close; }
+    const isOrphan=!!m.orphan || (parent && parent.id==null);
+    if(!parent && !isOrphan){ modal.innerHTML=`<p>부모 분류가 없습니다</p><button class="btn btn-ghost" id="c">닫기</button>`; modal.querySelector("#c").onclick=close; }
     else if(!canAddRank(rank)){
       modal.innerHTML=`<p>이 계급을 추가할 권한이 없습니다.</p><button class="btn btn-ghost" id="c">닫기</button>`;
       modal.querySelector("#c").onclick=close;
@@ -3875,7 +3902,7 @@ function viewModal(){
       const lab=RANK_LABEL[rank]||rank;
       modal.style.maxWidth="min(520px,96vw)";
       modal.innerHTML=`<h2 class="gold" style="font-family:var(--serif);margin-top:0">${lab} 추가</h2>
-        <p class="muted" style="font-size:.85rem;margin-top:-.25rem">상위: <em>${esc(parent.scientificName||"")}</em> (${esc(RANK_LABEL[parent.rank]||parent.rank)})</p>
+        <p class="muted" style="font-size:.85rem;margin-top:-.25rem">상위: <em>${esc((parent&&parent.scientificName)||"(미분류 · 미아)")}</em>${parent&&parent.rank?` (${esc(RANK_LABEL[parent.rank]||parent.rank)})`:""}</p>
         <label class="field"><span>학명 *</span><input id="sci" placeholder="예: Scylla serrata" autocomplete="off"/></label>
         <label class="field"><span>국명</span><input id="ko" placeholder="예: 톱날꽃게" autocomplete="off"/></label>
         <label class="field"><span>명명자</span><input id="au" placeholder="예: Forskål, 1775" autocomplete="off"/></label>
@@ -3906,7 +3933,7 @@ function viewModal(){
         const id=slugId(sci, rank);
         if(S.taxa[id]){ err.textContent="같은 학명(ID)이 이미 있습니다"; return; }
         const taxon={
-          id, rank, parentId:parent.id,
+          id, rank, parentId:(parent && parent.id)!=null ? parent.id : null,
           scientificName:sci, koreanName:ko, authority:au,
           description:desc, bodyImages:[],
           profileImageUrl:"", profileImageCaption:"", profileImageLicense:"",
@@ -4745,7 +4772,7 @@ function viewModal(){
     modal.innerHTML=`<h2 class="gold" style="font-family:var(--serif);margin-top:0">관리자</h2><p class="muted" style="margin-top:-.35rem;font-size:.85rem">바로가기</p><div class="menu-grid" id="ag"></div><button class="btn btn-ghost" id="c" style="margin-top:.75rem;width:100%">닫기</button>`;
     modal.querySelector("#c").onclick=close;
     const ag=modal.querySelector("#ag");
-    [["최근 수정 목록",()=>{S.modal={type:"adminRevisions"};render();}],["최근 삭제된 문서",()=>{S.modal={type:"adminDeleted"};render();}],["건의 목록",()=>{S.reportFilter="suggestion";S.modal={type:"adminReports"};render();}],["금지어",()=>{S.modal={type:"banned"};render();}],["긴급 수정 잠금",()=>{S.modal={type:"editLock"};render();}],["부관리자",()=>{S.modal={type:"appoint"};render();}],["배경",()=>{S.modal={type:"bg"};render();}],["게스트 비번",()=>{S.modal={type:"masterPw"};render();}]].forEach(([lab,fn])=>{
+    [["최근 수정 목록",()=>{S.modal={type:"adminRevisions"};render();}],["최근 삭제된 문서",()=>{S.modal={type:"adminDeleted"};render();}],["미아 계통군 엄마찾아주기",()=>{S.modal={type:"orphanAdopt"};render();}],["건의 목록",()=>{S.reportFilter="suggestion";S.modal={type:"adminReports"};render();}],["금지어",()=>{S.modal={type:"banned"};render();}],["긴급 수정 잠금",()=>{S.modal={type:"editLock"};render();}],["부관리자",()=>{S.modal={type:"appoint"};render();}],["배경",()=>{S.modal={type:"bg"};render();}],["게스트 비번",()=>{S.modal={type:"masterPw"};render();}]].forEach(([lab,fn])=>{
       const b=el(`<button type="button" class="btn btn-line menu-item">${lab}</button>`); b.onclick=fn; ag.appendChild(b);
     });
   }
@@ -4868,6 +4895,204 @@ function viewModal(){
       });
     })();
   }
+
+  else if(m.type==="orphanAdopt"){
+    if(!isAdmin()){ modal.innerHTML=`<p>관리자만 이용할 수 있습니다</p><button class="btn btn-ghost" id="c">닫기</button>`; modal.querySelector("#c").onclick=close; }
+    else {
+      const list=orphanTaxa();
+      modal.style.maxWidth="min(520px,96vw)";
+      modal.innerHTML=`<h2 class="gold" style="font-family:var(--serif);margin-top:0">미아 계통군 엄마찾아주기</h2>
+        <p class="muted" style="font-size:.85rem;margin:0 0 .6rem">부모가 없거나 잘못된 종·속을 적절한 상위 계통에 붙입니다. (${list.length}건)</p>
+        <div id="orList" style="max-height:50vh;overflow:auto;display:flex;flex-direction:column;gap:.4rem"></div>
+        <button class="btn btn-ghost" id="c" style="width:100%;margin-top:.75rem">닫기</button>`;
+      modal.querySelector("#c").onclick=close;
+      const box=modal.querySelector("#orList");
+      if(!list.length) box.appendChild(el(`<div class="empty">미아 계통이 없습니다</div>`));
+      list.forEach(t=>{
+        const row=el(`<div class="panel" style="padding:.55rem .7rem"><div><em>${esc(displaySciName(t))}</em> <span class="muted">${esc(RANK_LABEL[t.rank]||t.rank)}</span></div>
+          <div style="display:flex;gap:.35rem;margin-top:.4rem;flex-wrap:wrap">
+            <button type="button" class="btn btn-gold" style="min-height:32px;font-size:.8rem">위치 지정</button>
+          </div></div>`);
+        row.querySelector("button").onclick=()=>{
+          S.modal={type:"addSpeciesWizard", step:"clade", stack:[], adoptId:t.id, adoptOnly:true};
+          render();
+        };
+        box.appendChild(row);
+      });
+    }
+  }
+  else if(m.type==="addSpeciesWizard"){
+    const step=m.step||"clade";
+    const stack=m.stack||[];
+    const adoptId=m.adoptId||null;
+    const adoptOnly=!!m.adoptOnly;
+    modal.style.maxWidth="min(520px,96vw)";
+    const backBtn=()=>{
+      if(stack.length){
+        const prev=stack[stack.length-1];
+        S.modal={type:"addSpeciesWizard", step:prev.step, stack:stack.slice(0,-1), parent:prev.parent, adoptId, adoptOnly};
+      } else { close(); }
+      render();
+    };
+    const title=adoptOnly?"미아 계통 배치":"종 추가하기";
+    if(step==="clade"){
+      modal.innerHTML=`<h2 class="gold" style="font-family:var(--serif);margin-top:0">${title}</h2>
+        <p class="muted" style="font-size:.85rem;margin:0 0 .55rem">대분류(절)를 고르세요.</p>
+        <div id="wiz" style="display:flex;flex-direction:column;gap:.35rem"></div>
+        <button type="button" class="btn btn-line" id="orphanAdd" style="width:100%;margin-top:.7rem;font-size:.82rem">어디에 둘지 모르겠음 — 일단 추가</button>
+        <p class="muted" style="font-size:.72rem;margin:.35rem 0 0">관리자가 나중에 적절한 계통으로 옮겨 줍니다.</p>
+        <button class="btn btn-ghost" id="c" style="width:100%;margin-top:.55rem">닫기</button>`;
+      modal.querySelector("#c").onclick=close;
+      const wiz=modal.querySelector("#wiz");
+      orderedClades().forEach(cl=>{
+        const b=el(`<button type="button" class="btn btn-line" style="width:100%;justify-content:flex-start;text-align:left"><em>${esc(cl.scientificName)}</em><span class="muted" style="margin-left:.4rem;font-size:.78rem">${esc(cl.koreanName||"")}</span></button>`);
+        b.onclick=()=>{
+          S.modal={type:"addSpeciesWizard", step:"superfamily", stack:[{step:"clade"}], parent:cl, adoptId, adoptOnly};
+          render();
+        };
+        wiz.appendChild(b);
+      });
+      modal.querySelector("#orphanAdd").onclick=()=>{
+        if(adoptOnly){ toast("배치할 상위 계통을 골라 주세요"); return; }
+        // orphan species: parentId null
+        S.modal={type:"add", parent:{id:null, scientificName:"(미분류)", rank:"clade"}, rank:"species", orphan:true};
+        render();
+      };
+    } else if(step==="superfamily"){
+      const parent=m.parent;
+      const kids=childrenOf(parent.id).filter(t=>t.rank==="superfamily").sort((a,b)=>(a.scientificName||"").localeCompare(b.scientificName||""));
+      modal.innerHTML=`<h2 class="gold" style="font-family:var(--serif);margin-top:0">${title}</h2>
+        <p class="muted" style="font-size:.85rem;margin:0 0 .55rem">상과 · 상위: <em>${esc(parent.scientificName)}</em></p>
+        <div id="wiz" style="display:flex;flex-direction:column;gap:.35rem;max-height:50vh;overflow:auto"></div>
+        <button class="btn btn-ghost" id="back" style="width:100%;margin-top:.65rem">뒤로</button>`;
+      modal.querySelector("#back").onclick=backBtn;
+      const wiz=modal.querySelector("#wiz");
+      if(!kids.length) wiz.appendChild(el(`<div class="empty">하위 상과 없음</div>`));
+      kids.forEach(sf=>{
+        const b=el(`<button type="button" class="btn btn-line" style="width:100%;justify-content:flex-start;text-align:left"><em>${esc(sf.scientificName)}</em></button>`);
+        b.onclick=()=>{
+          S.modal={type:"addSpeciesWizard", step:"family", stack:[...stack,{step:"superfamily",parent}], parent:sf, adoptId, adoptOnly};
+          render();
+        };
+        wiz.appendChild(b);
+      });
+    } else if(step==="family"){
+      const parent=m.parent;
+      const kids=childrenOf(parent.id).filter(t=>t.rank==="family").sort((a,b)=>(a.scientificName||"").localeCompare(b.scientificName||""));
+      modal.innerHTML=`<h2 class="gold" style="font-family:var(--serif);margin-top:0">${title}</h2>
+        <p class="muted" style="font-size:.85rem;margin:0 0 .55rem">과 · 상위: <em>${esc(parent.scientificName)}</em></p>
+        <div id="wiz" style="display:flex;flex-direction:column;gap:.35rem;max-height:50vh;overflow:auto"></div>
+        <button class="btn btn-ghost" id="back" style="width:100%;margin-top:.65rem">뒤로</button>`;
+      modal.querySelector("#back").onclick=backBtn;
+      const wiz=modal.querySelector("#wiz");
+      if(!kids.length){
+        // monotypic or no family - allow pick this SF as parent for genus/species path
+        wiz.appendChild(el(`<div class="empty">등록된 과가 없습니다. 상과 바로 아래에 추가할 수 없습니다. 관리자에게 과 추가를 요청하세요.</div>`));
+      }
+      kids.forEach(fam=>{
+        const b=el(`<button type="button" class="btn btn-line" style="width:100%;justify-content:flex-start;text-align:left"><em>${esc(fam.scientificName)}</em></button>`);
+        b.onclick=()=>{
+          S.modal={type:"addSpeciesWizard", step:"subOrGenus", stack:[...stack,{step:"family",parent}], parent:fam, adoptId, adoptOnly};
+          render();
+        };
+        wiz.appendChild(b);
+      });
+    } else if(step==="subOrGenus"){
+      const parent=m.parent; // family
+      const subs=childrenOf(parent.id).filter(t=>t.rank==="subfamily").sort((a,b)=>(a.scientificName||"").localeCompare(b.scientificName||""));
+      const gens=childrenOf(parent.id).filter(t=>t.rank==="genus").sort((a,b)=>(a.scientificName||"").localeCompare(b.scientificName||""));
+      modal.innerHTML=`<h2 class="gold" style="font-family:var(--serif);margin-top:0">${title}</h2>
+        <p class="muted" style="font-size:.85rem;margin:0 0 .55rem">아과·속 · 상위: <em>${esc(parent.scientificName)}</em></p>
+        <div id="wiz" style="display:flex;flex-direction:column;gap:.35rem;max-height:50vh;overflow:auto"></div>
+        <button class="btn btn-ghost" id="back" style="width:100%;margin-top:.65rem">뒤로</button>`;
+      modal.querySelector("#back").onclick=backBtn;
+      const wiz=modal.querySelector("#wiz");
+      if(subs.length){
+        wiz.appendChild(el(`<div class="side-title" style="margin-top:.2rem">아과</div>`));
+        subs.forEach(sf=>{
+          const b=el(`<button type="button" class="btn btn-line" style="width:100%;justify-content:flex-start"><em>${esc(sf.scientificName)}</em></button>`);
+          b.onclick=()=>{
+            S.modal={type:"addSpeciesWizard", step:"genus", stack:[...stack,{step:"subOrGenus",parent}], parent:sf, adoptId, adoptOnly};
+            render();
+          };
+          wiz.appendChild(b);
+        });
+      }
+      if(gens.length){
+        wiz.appendChild(el(`<div class="side-title" style="margin-top:.45rem">속 (과 직속)</div>`));
+        gens.forEach(g=>{
+          const b=el(`<button type="button" class="btn btn-line" style="width:100%;justify-content:flex-start"><em>${esc(g.scientificName)}</em></button>`);
+          b.onclick=()=>{
+            if(adoptOnly){
+              // place orphan under this genus
+              (async()=>{
+                const t=S.taxa[adoptId];
+                if(!t) return toast("대상 없음");
+                const next={...t, parentId:g.id};
+                try{ await saveTaxon(next, "미아 배치 → "+g.scientificName); toast("배치 완료"); S.modal=null; render(); }
+                catch(e){ alert(e.message||e); }
+              })();
+              return;
+            }
+            S.modal={type:"add", parent:g, rank:"species"};
+            render();
+          };
+          wiz.appendChild(b);
+        });
+      }
+      // also allow creating under family via new genus path: pick family as parent for genus add if admin, or species if somehow
+      if(!subs.length && !gens.length){
+        wiz.appendChild(el(`<div class="empty">하위 아과·속이 없습니다.</div>`));
+        if(canAddRank("genus")){
+          const addG=el(`<button type="button" class="btn btn-gold" style="width:100%;margin-top:.4rem">여기에 속 먼저 추가</button>`);
+          addG.onclick=()=>{ S.modal={type:"add", parent, rank:"genus"}; render(); };
+          wiz.appendChild(addG);
+        }
+      }
+      if(adoptOnly && (subs.length||gens.length)){
+        // allow adopt directly under family if species-level allowed - skip, need genus
+      }
+    } else if(step==="genus"){
+      const parent=m.parent; // subfamily
+      const gens=childrenOf(parent.id).filter(t=>t.rank==="genus").sort((a,b)=>(a.scientificName||"").localeCompare(b.scientificName||""));
+      modal.innerHTML=`<h2 class="gold" style="font-family:var(--serif);margin-top:0">${title}</h2>
+        <p class="muted" style="font-size:.85rem;margin:0 0 .55rem">속 · 상위: <em>${esc(parent.scientificName)}</em></p>
+        <div id="wiz" style="display:flex;flex-direction:column;gap:.35rem;max-height:50vh;overflow:auto"></div>
+        <button class="btn btn-ghost" id="back" style="width:100%;margin-top:.65rem">뒤로</button>`;
+      modal.querySelector("#back").onclick=backBtn;
+      const wiz=modal.querySelector("#wiz");
+      if(!gens.length){
+        wiz.appendChild(el(`<div class="empty">속이 없습니다.</div>`));
+        if(canAddRank("genus")){
+          const addG=el(`<button type="button" class="btn btn-gold" style="width:100%">속 추가</button>`);
+          addG.onclick=()=>{ S.modal={type:"add", parent, rank:"genus"}; render(); };
+          wiz.appendChild(addG);
+        }
+      }
+      gens.forEach(g=>{
+        const b=el(`<button type="button" class="btn btn-line" style="width:100%;justify-content:flex-start"><em>${esc(g.scientificName)}</em></button>`);
+        b.onclick=()=>{
+          if(adoptOnly){
+            (async()=>{
+              const t=S.taxa[adoptId];
+              if(!t) return toast("대상 없음");
+              const next={...t, parentId:g.id};
+              try{ await saveTaxon(next, "미아 배치 → "+g.scientificName); toast("배치 완료"); S.modal=null; render(); }
+              catch(e){ alert(e.message||e); }
+            })();
+            return;
+          }
+          S.modal={type:"add", parent:g, rank:"species"};
+          render();
+        };
+        wiz.appendChild(b);
+      });
+    } else {
+      modal.innerHTML=`<p>알 수 없는 단계</p><button class="btn btn-ghost" id="c">닫기</button>`;
+      modal.querySelector("#c").onclick=close;
+    }
+  }
+
   else { modal.innerHTML=`<button class="btn btn-ghost" id="c">닫기</button>`; modal.querySelector("#c").onclick=close; }
   back.appendChild(modal); try{ wireExtinctPair(modal); }catch(e){} return back;
 }
