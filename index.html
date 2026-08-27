@@ -881,7 +881,7 @@ const SEGS = [{id:"home",label:"홈"},{id:"taxonomy",label:"계통분류"},{id:"
 
 let _prevTaxonId=null;
 let _bootRitualDone=false;
-const S = { ready:false, loading:true, session:null, profile:null, taxa:{}, revisions:[], lifeFilter:"all", entered:false, segment:"home", sidebarOpen:true, segOpen:true, notifOpen:false, notifTab:"mine", notifFilter:"all", notifications:[], unread:0, view:null, slide:0, slideGallery:"all", slideFs:false, slideAuto:true, slideFade:true, slideMs:4500, slideTimer:null, modal:null, toast:"", rankings:[], guestPw:DEFAULT_GUEST_PW, bannedWords:[], carrierIps:[], search:"", speciesPage:0, editLock:(function(){try{return localStorage.getItem("edit_lock")||"off";}catch(e){return "off";}})(), sfCladeFilter:"all", sectionFold:{}, dismissedNotifs:JSON.parse(localStorage.getItem("brachy_dismissed_notifs")||"[]"), chatMode:"public", chatPeer:null, chatMention:"", publicChatResetDays:7 };
+const S = { ready:false, loading:true, session:null, profile:null, taxa:{}, revisions:[], lifeFilter:"all", entered:false, siteLinkKorean:"", siteLinkOrnamental:"", segment:"home", sidebarOpen:true, segOpen:true, notifOpen:false, notifTab:"mine", notifFilter:"all", notifications:[], unread:0, view:null, slide:0, slideGallery:"all", slideFs:false, slideAuto:true, slideFade:true, slideMs:4500, slideTimer:null, modal:null, toast:"", rankings:[], guestPw:DEFAULT_GUEST_PW, bannedWords:[], carrierIps:[], search:"", speciesPage:0, editLock:(function(){try{return localStorage.getItem("edit_lock")||"off";}catch(e){return "off";}})(), sfCladeFilter:"all", sectionFold:{}, dismissedNotifs:JSON.parse(localStorage.getItem("brachy_dismissed_notifs")||"[]"), chatMode:"public", chatPeer:null, chatMention:"", publicChatResetDays:7 };
 
 function linkify(text){
   const s=String(text||"");
@@ -1733,38 +1733,21 @@ async function loadRevisionSnapshot(revId){
 }
 
 
-async function backfillOrnamentalFlags(taxaMap){
-  const blocked=t=>typeof isOrnamentalExcludedLineage==="function" && isOrnamentalExcludedLineage(t);
-  const want=t=>{
-    if(!t || blocked(t)) return false;
-    if(typeof isThoracoLineage==="function" && isThoracoLineage(t)) return true;
-    if(typeof isTrueFwTaxon==="function" && isTrueFwTaxon(t)) return true;
-    if(typeof isThoFwClade==="function" && isThoFwClade(t)) return true;
-    let cur=t,g=0,seen=new Set();
-    const hit=new Set(["grapsoidea","ocypodoidea","potamoidea","gecarcinucoidea","pseudothelphusoidea","trichodactyloidea","gecarcinidae","gecarcinucidae","potamidae","potamonautidae","pseudothelphusidae","trichodactylidae","sesarmidae","varunidae","ocypodidae","glyptograpsidae","macrophthalmidae","dotillidae","mictyridae","gecarcoidea"]);
-    while(cur && g++<24 && !seen.has(cur.id)){
-      seen.add(cur.id);
-      const n=String(cur.scientificName||"").replace(/^†\s*/,"").toLowerCase();
-      if(n.includes("thoracotrem") || n.includes("true freshwater") || n.includes("진성 민물")) return true;
-      if(hit.has(n)) return true;
-      cur=cur.parentId?taxaMap[cur.parentId]:null;
-    }
-    return false;
-  };
-  const ids=Object.values(taxaMap||{}).filter(t=>want(t) && !t.inOrnamental).map(t=>t.id);
-  if(!ids.length) return taxaMap;
-  let ok=0;
-  for(let i=0;i<ids.length;i+=60){
-    const chunk=ids.slice(i,i+60);
-    const up=await sb.from("taxa").update({in_ornamental:true}).in("id",chunk).select("id");
-    if(up.error){ console.warn("orn backfill", up.error.message||up.error); break; }
-    const done=(up.data||[]).map(r=>r.id);
-    if(!done.length){ console.warn("orn backfill 0 rows — RLS 또는 컬럼 없음"); break; }
-    done.forEach(id=>{ if(taxaMap[id]) taxaMap[id].inOrnamental=true; });
-    ok+=done.length;
-  }
-  if(ok) console.info("관상용 일괄 등록", ok);
-  return taxaMap;
+
+function normSciName(s){
+  return String(s||"").replace(/^†\s*/,"").replace(/\s+/g," ").trim().toLowerCase();
+}
+function findExistingTaxonBySci(sci){
+  const n=normSciName(sci);
+  if(!n) return null;
+  return Object.values(S.taxa||{}).find(t=>normSciName(t.scientificName)===n)||null;
+}
+function siteLinkKorean(){ return String(S.siteLinkKorean||"").trim(); }
+function siteLinkOrnamental(){ return String(S.siteLinkOrnamental||"").trim(); }
+function openSiteLink(url){
+  const u=String(url||"").trim();
+  if(!u){ toast("관리자가 아직 상대 도감 주소를 넣지 않았습니다"); return; }
+  window.open(u, "_blank", "noopener");
 }
 
 async function loadAll(){
@@ -1805,17 +1788,14 @@ async function loadAll(){
         window.__crabTaxa=taxa;
       }
     }catch(e){ console.warn("in_ornamental merge", e); }
-    try{
-      taxa=await backfillOrnamentalFlags(S.taxa||taxa);
-      S.taxa=taxa;
-      window.__crabTaxa=taxa;
-    }catch(e){ console.warn("orn backfill", e); }
 
     for(const s of settings||[]){
       if(s.key==="guest_edit_password") S.guestPw=s.value||DEFAULT_GUEST_PW;
       if(s.key==="site_bg_url"&&s.value){ const img=document.querySelector("#site-bg img"); if(img) img.src=s.value; }
       if(s.key==="banned_words"){ try{S.bannedWords=JSON.parse(s.value);}catch{S.bannedWords=[];} }
       if(s.key==="edit_lock"){ S.editLock=(s.value||"off"); try{ if(s.value) localStorage.setItem("edit_lock",s.value); }catch(e){} }
+      if(s.key==="site_link_korean") S.siteLinkKorean=s.value||"";
+      if(s.key==="site_link_ornamental") S.siteLinkOrnamental=s.value||"";
       if(s.key==="carrier_ip_prefixes"){ try{S.carrierIps=JSON.parse(s.value);}catch{S.carrierIps=[];} }
       if(s.key==="public_chat_reset_days"){ S.publicChatResetDays=Math.max(1,Math.min(7,parseInt(s.value,10)||7)); }
       if(s.key==="public_chat_locked"){ S.publicChatLocked=(s.value==="1"||s.value==="true"); }
@@ -2696,9 +2676,11 @@ function render(fromSchedule){
         <h1 style="font-style:normal;margin:.35rem 0 .5rem;font-size:1.35rem">Brachyura</h1>
         <p class="muted" style="font-size:.9rem;line-height:1.6;margin:0 0 1.15rem">${intro}</p>
         <button type="button" class="btn btn-gold" id="enterBtn" style="width:100%;min-height:48px;font-size:1rem;letter-spacing:.04em">한국어 게 도감 열람하기</button>
-        <p class="muted" style="font-size:.75rem;margin:.7rem 0 0">클릭하면 홈 화면으로 이동합니다.</p>
+        <p class="muted" style="font-size:.78rem;line-height:1.55;margin:.7rem 0 0">애완용 담수~육상게 위주로 <button type="button" id="toOrn" class="wiki-link" style="display:inline;padding:0;border:0;background:none;color:var(--gold);text-decoration:underline;cursor:pointer;font:inherit">보러가기</button></p>
       </div>
     </div>`);
+    const toOrn=gate.querySelector("#toOrn");
+    if(toOrn) toOrn.onclick=()=>openSiteLink(siteLinkOrnamental());
     gate.querySelector("#enterBtn").onclick=()=>{
       S.entered=true;
       _bgmOn=true;
@@ -3639,6 +3621,7 @@ function viewOpts(){
     items.push(["부관리자",()=>{S.modal={type:"appoint"};render();}]);
     items.push(["일괄 데이터 정리",()=>{S.modal={type:"adminPurge"};render();}]);
     items.push(["비상 게스트 비번",()=>{S.modal={type:"masterPw"};render();}]);
+    items.push(["도감 교차 링크",()=>{S.modal={type:"siteLinks"};render();}]);
   }
   if(isMod()){
     items.push(["최근 수정 목록",()=>{S.modal={type:"adminRevisions"};render();}]);
@@ -4380,8 +4363,20 @@ function viewModal(){
         const err=modal.querySelector("#addErr");
         if(!sci){ err.textContent="학명을 입력하세요"; return; }
         if(!canAddRank(rank)){ err.textContent="권한 없음"; return; }
+        const exist=findExistingTaxonBySci(sci);
+        if(exist){
+          err.textContent="이미 있는 계통/종입니다";
+          toast("이미 있는 계통/종입니다");
+          S.modal=null; S.entered=true; S.segment="taxonomy"; S.view={kind:"taxon",id:exist.id};
+          render();
+          return;
+        }
         const id=slugId(sci, rank);
-        if(S.taxa[id]){ err.textContent="같은 학명(ID)이 이미 있습니다"; return; }
+        if(S.taxa[id] && normSciName(S.taxa[id].scientificName)===normSciName(sci)){
+          err.textContent="이미 있는 계통/종입니다";
+          S.modal=null; S.view={kind:"taxon",id:id}; S.segment="taxonomy"; render();
+          return;
+        }
         const taxon={
           id, rank, parentId:(parent && parent.id)!=null ? parent.id : null,
           scientificName:sci, koreanName:ko, authority:au,
@@ -4868,6 +4863,32 @@ function viewModal(){
     };
   }
   else if(m.type==="bg"){ modal.innerHTML=`<h2 class="gold" style="font-family:var(--serif);margin-top:0">배경 URL</h2><label class="field"><span>URL</span><input id="u"/></label><div style="display:flex;gap:.5rem;justify-content:flex-end"><button class="btn btn-ghost" id="c">취소</button><button class="btn btn-gold" id="go">적용</button></div>`; modal.querySelector("#c").onclick=close; modal.querySelector("#go").onclick=async()=>{ const url=modal.querySelector("#u").value.trim(); if(!isAdmin()){ await sb.from("reports").insert({kind:"suggestion",body:"[배경] "+url,status:"open"}); toast("요청"); close(); return; } await sb.from("settings").upsert({key:"site_bg_url",value:url}); const img=document.querySelector("#site-bg img"); if(img&&url) img.src=url; toast("변경"); close(); }; }
+  else if(m.type==="siteLinks"){
+    if(!isAdmin()){ modal.innerHTML=`<p>최고관리자만 변경할 수 있습니다.</p><button class="btn btn-ghost" id="c">닫기</button>`; modal.querySelector("#c").onclick=close; }
+    else {
+      modal.style.maxWidth="min(520px,96vw)";
+      modal.innerHTML=`<h2 class="gold" style="font-family:var(--serif);margin-top:0">도감 교차 링크</h2>
+        <p class="muted" style="font-size:.85rem;margin-top:-.2rem">각 시작화면·안내 버튼이 이 주소를 사용합니다. 비워 두면 버튼은 안내만 합니다.</p>
+        <label class="field"><span>한국어 게 도감 URL</span><input id="linkKr" type="url" placeholder="https://..." value="${esc(S.siteLinkKorean||"")}"/></label>
+        <label class="field"><span>관상용 게 도감 URL</span><input id="linkOrn" type="url" placeholder="https://..." value="${esc(S.siteLinkOrnamental||"")}"/></label>
+        <div style="display:flex;gap:.45rem;margin-top:.75rem">
+          <button type="button" class="btn btn-gold" id="save" style="flex:1">저장</button>
+          <button type="button" class="btn btn-ghost" id="c">닫기</button>
+        </div>`;
+      modal.querySelector("#c").onclick=close;
+      modal.querySelector("#save").onclick=async()=>{
+        const kr=(modal.querySelector("#linkKr").value||"").trim();
+        const orn=(modal.querySelector("#linkOrn").value||"").trim();
+        try{
+          const {error:e1}=await sb.from("settings").upsert({key:"site_link_korean",value:kr},{onConflict:"key"});
+          const {error:e2}=await sb.from("settings").upsert({key:"site_link_ornamental",value:orn},{onConflict:"key"});
+          if(e1||e2) throw (e1||e2);
+          S.siteLinkKorean=kr; S.siteLinkOrnamental=orn;
+          toast("교차 링크 저장됨"); close();
+        }catch(e){ alert(e.message||e); }
+      };
+    }
+  }
   else if(m.type==="masterPw"){ modal.innerHTML=`<h2 class="gold" style="font-family:var(--serif);margin-top:0">게스트 비번</h2><label class="field"><span>마스터</span><input type="password" id="mk"/></label><label class="field"><span>새 비번</span><input type="password" id="nw"/></label><div style="display:flex;gap:.5rem;justify-content:flex-end"><button class="btn btn-ghost" id="c">취소</button><button class="btn btn-gold" id="go">변경</button></div>`; modal.querySelector("#c").onclick=close; modal.querySelector("#go").onclick=async()=>{ if(modal.querySelector("#mk").value!==MASTER_PASSWORD) return alert("오류"); const nw=modal.querySelector("#nw").value; if(nw.length<4) return alert("4자+"); await sb.from("settings").upsert({key:"guest_edit_password",value:nw}); await sb.from("taxa").upsert({id:"__wiki_config__",rank:"clade",scientific_name:"__WIKI_CONFIG__",korean_name:"",authority:"",description:JSON.stringify({edit_password:nw}),profile_image_url:"",profile_image_caption:"",body_images:[],parent_id:null}); S.guestPw=nw; toast("변경"); close(); }; }
   else if(m.type==="banned"){ modal.style.maxWidth="480px";
     const tags=(S.bannedWords||[]).slice();
