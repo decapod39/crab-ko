@@ -411,7 +411,7 @@ h1,h2{font-family:var(--serif);font-weight:600}h1{font-style:italic;font-size:cl
 }
 
 .main > *{
-  animation:riseIn .4s cubic-bezier(.22,1,.36,1) both;
+  animation:none;
 }
 
 @media (prefers-reduced-motion: reduce){
@@ -731,6 +731,31 @@ body.boot-ready #root{/* visible */}
 }.fold-head{width:100%;display:flex;align-items:center;justify-content:space-between;gap:.6rem;background:none;border:0;color:var(--gold);font-family:var(--serif);font-size:1.15rem;padding:.15rem 0 .35rem;cursor:pointer}
 .fold-mark{font-size:.72rem;color:var(--muted);font-family:var(--sans)}
 .fold.shut .fold-body{display:none}
+
+.top-search{position:relative;z-index:60;overflow:visible}
+.top-search-wrap{position:static;display:flex;align-items:center;min-width:0}
+.search-icon{position:absolute;left:.55rem;top:50%;transform:translateY(-50%);font-size:1rem;pointer-events:none;color:var(--muted);z-index:1}
+.top-search input{padding-left:1.7rem}
+.top-search-results{left:0;right:0;top:100%;z-index:90;box-shadow:0 10px 24px rgba(0,0,0,.35)}
+.top-search .btn{position:relative;z-index:1}
+.site-chrome{overflow:visible;z-index:50}
+@media(max-width:768px){
+  .top-search{padding:.18rem .5rem .28rem;gap:.3rem}
+  .top-search input{min-height:32px;padding:.2rem .55rem .2rem 1.6rem;font-size:16px}
+  .top-search .btn{min-height:32px;padding:0 .4rem;font-size:.72rem}
+  .top-search .help-btn{width:32px;min-width:32px;padding:0}
+}
+
+.gc-wrap{margin-top:1.15rem;padding-top:.8rem;border-top:1px solid color-mix(in oklab,var(--gold) 22%,transparent)}
+.gc-card{border:1px solid color-mix(in oklab,var(--gold) 30%,transparent);background:color-mix(in oklab,var(--bg-inset) 78%,#1a1712);border-radius:10px;padding:.7rem .75rem;margin:.4rem 0}
+.gc-card.reply{margin-left:1.1rem}
+.gc-who{display:flex;align-items:center;gap:.45rem}
+.gc-av{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:color-mix(in oklab,var(--gold) 22%,#111);color:var(--gold-soft);border:1px solid color-mix(in oklab,var(--gold) 45%,transparent);font-size:.78rem;font-weight:700}
+.gc-compose textarea,.gc-card textarea{width:100%;min-height:2.4rem;height:2.4rem;max-height:8rem;resize:none;overflow-y:auto;background:var(--bg-inset);color:var(--ivory);border:1px solid color-mix(in oklab,var(--gold) 48%,transparent);border-radius:8px;padding:.45rem .65rem;outline:none;line-height:1.4}
+.gc-body{margin-top:.4rem;white-space:pre-wrap;font-size:.92rem;line-height:1.5}
+.gc-body.shut{max-height:calc(1.5em * 6);overflow:hidden}
+.gc-more{min-height:24px;padding:0;font-size:.75rem;color:var(--gold-soft)}
+.gc-compose textarea:focus,.gc-card textarea:focus{border-color:var(--gold-soft);box-shadow:0 0 0 1px color-mix(in oklab,var(--gold) 35%,transparent)}
 .staff-nick{font-weight:700;color:var(--gold-soft)}
 .staff-badge{font-weight:700;font-size:.72em;color:var(--gold);letter-spacing:.02em;margin-left:.15rem}
 .chat-name .staff-badge{vertical-align:baseline}
@@ -948,7 +973,7 @@ function validParentRanks(rank){
   return [];
 }
 
-const SEGS = [{id:"home",label:"홈"},{id:"taxonomy",label:"계통분류"},{id:"guides",label:"공유 가이드"},{id:"slides",label:"갤러리"},{id:"chat",label:"토론"},{id:"rankings",label:"기여 순위"},{id:"mypage",label:"마이"}];
+const SEGS = [{id:"home",label:"홈"},{id:"taxonomy",label:"계통분류"},{id:"guides",label:"커뮤니티 가이드"},{id:"slides",label:"갤러리"},{id:"chat",label:"토론"},{id:"rankings",label:"기여 순위"},{id:"mypage",label:"마이"}];
 
 let _prevTaxonId=null;
 let _bootRitualDone=false;
@@ -1276,13 +1301,34 @@ function lifeVisible(t){
   return true;
 }
 /** 슬라이드쇼 갤러리 필터 (현세 절멸은 화석 갤러리에 넣지 않음) */
+function shuffleStable(list, key, idOf){
+  const ids=list.map(idOf);
+  const sig=key+"|"+ids.slice().sort().join(",");
+  if(!S._mixBags) S._mixBags={};
+  if(!S._mixBags[sig]){
+    const order=ids.slice();
+    for(let i=order.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; const tmp=order[i]; order[i]=order[j]; order[j]=tmp; }
+    S._mixBags[sig]=order;
+  }
+  const map={};
+  list.forEach((item,i)=>{ if(map[ids[i]]==null) map[ids[i]]=item; });
+  return S._mixBags[sig].map(id=>map[id]).filter(Boolean);
+}
+function arrangeDecapodaMix(list, key, isCrab, idOf){
+  const crabs=[], rest=[];
+  list.forEach(item=> (isCrab(item)?crabs:rest).push(item));
+  const sc=shuffleStable(crabs, key+"-crab", idOf);
+  const sr=shuffleStable(rest, key+"-rest", idOf);
+  const keep=Math.min(sc.length, Math.max(0, Math.round(sr.length/5)));
+  return sc.slice(0, keep).concat(sr, sc.slice(keep));
+}
 function slideGalleryPhotos(){
   const g=S.slideGallery||"all";
   let list=Object.values(S.taxa).filter(t=>t.rank==="species"&&t.profileImageUrl&&isBrachyura(t));
   if(g==="extant") list=list.filter(t=>!t.extinct);
   else if(g==="fossil") list=list.filter(t=>isFossilTaxon(t));
   // all: 전부
-  return list.sort((a,b)=>a.scientificName.localeCompare(b.scientificName));
+  return shuffleStable(list, "gal-"+(S.slideGallery||"all"), t=>t.id);
 }
 function maybeCollapseToSuperfamily(taxon){
   // 상과에 과가 하나뿐이면 과 문서 → 상과로
@@ -1346,7 +1392,19 @@ function childrenOf(pid){ return Object.values(S.taxa).filter(t=>t.parentId===pi
 function ancestorsOf(id){ const c=[]; let cur=S.taxa[id]; const g=new Set(); while(cur&&!g.has(cur.id)){ c.unshift(cur); g.add(cur.id); cur=cur.parentId?S.taxa[cur.parentId]:null; } return c; }
 function findBySci(n){ n=(n||"").trim().toLowerCase(); return Object.values(S.taxa).find(t=>t.scientificName.toLowerCase()===n); }
 function superfamilies(){ return Object.values(S.taxa).filter(t=>t.rank==="superfamily" && isBrachyura(t)).sort((a,b)=>(a.catalogNo??0)-(b.catalogNo??0)); }
-function speciesPhotos(){ return Object.values(S.taxa).filter(t=>t.rank==="species"&&t.profileImageUrl&&lifeVisible(t)&&isBrachyura(t)).sort((a,b)=>a.scientificName.localeCompare(b.scientificName)); }
+function shuffleOnce(list, key){
+  const ids=list.map(t=>t.id);
+  const sig=ids.slice().sort().join(",");
+  if(!S._slideBags) S._slideBags={};
+  if(!S._slideBags[key] || S._slideBags[key].sig!==sig){
+    const order=ids.slice();
+    for(let i=order.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; const tmp=order[i]; order[i]=order[j]; order[j]=tmp; }
+    S._slideBags[key]={sig, order};
+  }
+  const map={}; list.forEach(t=>map[t.id]=t);
+  return S._slideBags[key].order.map(id=>map[id]).filter(Boolean);
+}
+function speciesPhotos(){ return shuffleOnce(Object.values(S.taxa).filter(t=>t.rank==="species"&&t.profileImageUrl&&lifeVisible(t)&&isBrachyura(t)), "home"); }
 function repImg(sf){ const q=[sf.id], seen=new Set(); while(q.length){ const id=q.shift(); if(seen.has(id)) continue; seen.add(id); const t=S.taxa[id]; if(t?.rank==="species"&&t.profileImageUrl) return t.profileImageUrl; childrenOf(id).forEach(c=>q.push(c.id)); } return ""; }
 
 
@@ -1557,7 +1615,17 @@ function buildWikiDom(taxon){
     const foldBtn=el(`<button type="button" class="sec-bracket" title="${folded?"펼치기":"접기"}">${folded?"〔+〕":"〔−〕"}</button>`);
     foldBtn.onclick=(e)=>{ e.stopPropagation(); S.sectionFold[key]=!S.sectionFold[key]; render(); };
     const editBtn=el(`<button type="button" class="sec-bracket" title="문단 수정">〔편집〕</button>`);
-    editBtn.onclick=(e)=>{ e.stopPropagation(); S.modal={type:"sectionEdit",taxonId:taxon.id,sectionIndex:si}; render(); };
+    editBtn.onclick=async(e)=>{
+      e.stopPropagation();
+      if(taxon._isGuide){
+        S.modal={type:"sectionEdit",kind:"guide",taxonId:taxon.id,sectionIndex:si};
+        render();
+        return;
+      }
+      await ensureTaxonBody(taxon.id);
+      S.modal={type:"sectionEdit",kind:"taxon",taxonId:taxon.id,sectionIndex:si};
+      render();
+    };
     tools.appendChild(foldBtn); tools.appendChild(editBtn); head.appendChild(tools);
     block.appendChild(head);
     const body=el(`<div class="sec-body ${folded?"collapsed":""}"></div>`);
@@ -2681,6 +2749,38 @@ function parseHashToState(){
     return {segment:seg, view, modal:null, notifOpen:false, slideFs:false};
   }catch(e){ return null; }
 }
+function navSnap(){
+  return {segment:S.segment||"home", view:S.view?{...S.view}:null, guideId:S.guideId||null};
+}
+function navSame(a,b){
+  if(!a||!b) return false;
+  return a.segment===b.segment && (a.guideId||null)===(b.guideId||null) && JSON.stringify(a.view||null)===JSON.stringify(b.view||null);
+}
+function pushNav(){
+  if(S._navQuiet || !S.entered) return;
+  if(!S.navStack) S.navStack=[];
+  if(S.navIndex==null) S.navIndex=-1;
+  const snap=navSnap();
+  if(navSame(S.navStack[S.navIndex], snap)) return;
+  S.navStack=S.navStack.slice(0, S.navIndex+1);
+  S.navStack.push(snap);
+  if(S.navStack.length>50) S.navStack.shift();
+  S.navIndex=S.navStack.length-1;
+}
+function goNav(delta){
+  if(!S.navStack || S.navIndex==null){ toast(delta<0?"더 이상 뒤 기록이 없습니다":"더 이상 앞 기록이 없습니다"); return; }
+  const next=S.navIndex+delta;
+  if(next<0 || next>=S.navStack.length){ toast(delta<0?"더 이상 뒤 기록이 없습니다":"더 이상 앞 기록이 없습니다"); return; }
+  const st=S.navStack[next];
+  S.navIndex=next;
+  S._navQuiet=true;
+  S.segment=st.segment||"home";
+  S.view=st.view||null;
+  S.guideId=st.guideId||null;
+  S.modal=null; S.notifOpen=false; S.slideFs=false;
+  render();
+  S._navQuiet=false;
+}
 function pushAppState(replace){
   if(_histQuiet) return;
   try{
@@ -2778,7 +2878,22 @@ function renderKeepScroll(){
   setTimeout(restore,60);
   setTimeout(restore,180);
 }
+function restoreTabScroll(){
+  const k=S._tabScroll; if(!k) return;
+  const apply=()=>{
+    try{ window.scrollTo(0,k.y||0); }catch(e){}
+    try{ if(document.scrollingElement) document.scrollingElement.scrollTop=k.se||k.y||0; }catch(e){}
+    const root=document.getElementById("root"); if(root) root.scrollTop=k.root||0;
+    const main=document.querySelector(".main"); if(main) main.scrollTop=k.main||0;
+    const shell=document.querySelector(".shell"); if(shell) shell.scrollTop=k.shell||0;
+  };
+  apply();
+  requestAnimationFrame(apply);
+  setTimeout(apply,40);
+  setTimeout(apply,120);
+}
 function maybeScrollTopAfterNav(){
+  if(S._tabScroll){ restoreTabScroll(); S._tabScroll=null; return; }
   if(S._scrollToSpecies){
     S._scrollToSpecies=false;
     requestAnimationFrame(()=>{
@@ -2792,12 +2907,17 @@ function maybeScrollTopAfterNav(){
     const key=[S.segment, S.view&&S.view.kind, S.view&&S.view.id, S.rankPage, S.mediaPage, S.spPage].join("|");
     const prev=window._navScrollKey;
     window._navScrollKey=key;
-    if(prev===key && !S._scrollTopAfterRender) return;
+    const restoreKept=()=>{
+      const k=S._keepScroll; if(!k) return;
+      try{ window.scrollTo(0,k.y||0); }catch(e){}
+      document.querySelectorAll(".main,.shell,.sidebar-scroll").forEach((el,i)=>{ if(k.mains&&k.mains[i]!=null) el.scrollTop=k.mains[i]; });
+    };
+    if(prev===key && !S._scrollTopAfterRender){ restoreKept(); return; }
     const topOnly=["home","taxonomy","guides","slides","chat","rankings","mypage"];
     const onlyTopTab=topOnly.includes(S.segment) && !S.view && !S._scrollTopAfterRender;
     if(onlyTopTab && prev!=null){
       const prevSeg=(prev.split("|")[0]||"");
-      if(topOnly.includes(prevSeg)) return; // 탭끼리만 이동
+      if(topOnly.includes(prevSeg)){ restoreKept(); return; }
     }
     S._scrollTopAfterRender=false;
     requestAnimationFrame(()=>{ scrollMainToTop(); setTimeout(scrollMainToTop, 50); setTimeout(scrollMainToTop, 150); });
@@ -2878,6 +2998,8 @@ function render(fromSchedule){
   window._hadModal=!!S.modal;
   const root=document.getElementById("root");
   try {
+  try{ S._keepScroll={ y:window.scrollY||document.documentElement.scrollTop||0, mains:[...document.querySelectorAll(".main,.shell,.sidebar-scroll")].map(el=>el.scrollTop) }; }catch(e){}
+  try{ const prevSeg=document.querySelector(".seg-wrap"); S._segScrollLeft=prevSeg?prevSeg.scrollLeft: (S._segScrollLeft||0); }catch(e){}
   root.innerHTML="";
   if(S.loading&&!S.ready){ root.innerHTML=`<div class="main" style="display:grid;place-items:center;min-height:80dvh"><div class="panel"><div class="gold">한국어 게 도감</div><h1 style="font-style:normal">불러오는 중…</h1></div></div>`; return; }
   const chrome=el(`<div class="site-chrome" id="site-chrome"></div>`);
@@ -2923,7 +3045,20 @@ function render(fromSchedule){
   chrome.appendChild(tsw);
 
   
-  if(!(S.segment==="slides"&&S.slideFs&&!S.segOpen)){ const seg=el(`<div class="seg-wrap ${S.segment==="slides"&&!S.segOpen?"hidden":""}"></div>`); SEGS.forEach(s=>{ const b=el(`<button type="button" class="seg ${S.segment===s.id?"on":""}">${s.label}</button>`); b.onclick=()=>{S.segment=s.id;S.view=null;S.slideFs=false; if(s.id==="slides") S._jiggleSlide=true; render();}; seg.appendChild(b); }); chrome.appendChild(seg); const on=seg.querySelector(".seg.on"); if(on) on.scrollIntoView({inline:"center",block:"nearest"}); applyChromeHidden(); }
+  if(!(S.segment==="slides"&&S.slideFs&&!S.segOpen)){ const seg=el(`<div class="seg-wrap ${S.segment==="slides"&&!S.segOpen?"hidden":""}"></div>`); SEGS.forEach(s=>{ const b=el(`<button type="button" class="seg ${S.segment===s.id?"on":""}">${s.label}</button>`); b.onclick=()=>{
+    if(!S.menuScroll) S.menuScroll={};
+    S.menuScroll[S.segment]={
+      y:window.scrollY||document.documentElement.scrollTop||document.body.scrollTop||0,
+      se:document.scrollingElement?document.scrollingElement.scrollTop:0,
+      root:(document.getElementById("root")||{}).scrollTop||0,
+      main:(document.querySelector(".main")||{}).scrollTop||0,
+      shell:(document.querySelector(".shell")||{}).scrollTop||0
+    };
+    try{ const segEl=b.closest(".seg-wrap"); if(segEl) S._segScrollLeft=segEl.scrollLeft; }catch(e){}
+    S.segment=s.id;S.view=null;S.slideFs=false; if(s.id==="slides") S._jiggleSlide=true;
+    S._tabScroll=S.menuScroll[s.id]||{y:0,se:0,root:0,main:0,shell:0};
+    render();
+  }; seg.appendChild(b); }); chrome.appendChild(seg); const keepSeg=S._segScrollLeft||0; requestAnimationFrame(()=>{ const live=document.querySelector(".seg-wrap"); if(live) live.scrollLeft=keepSeg; }); }
   root.appendChild(chrome);
 
   
@@ -2986,23 +3121,8 @@ function render(fromSchedule){
       // 홈은 히스토리에 남김 (브라우저 뒤로가기로 복귀 가능)
       render();
     };
-    trail.querySelector("#ntBack").onclick=()=>{
-      try{sfx("tap")}catch(e){}
-      try{
-        // 앱 안 이동 기록이 있으면 브라우저와 동일하게 back
-        if(history.state || (location.hash&&location.hash.length>2)) history.back();
-        else {
-          S.segment="home"; S.view=null; S.modal=null; S.notifOpen=false;
-          render();
-        }
-      }catch(e){
-        S.segment="home"; S.view=null; S.modal=null; render();
-      }
-    };
-    trail.querySelector("#ntFwd").onclick=()=>{
-      try{sfx("tap")}catch(e){}
-      try{ history.forward(); }catch(e){ toast("더 이상 앞 기록이 없습니다"); }
-    };
+    trail.querySelector("#ntBack").onclick=()=>{ try{sfx("tap")}catch(e){} goNav(-1); };
+    trail.querySelector("#ntFwd").onclick=()=>{ try{sfx("tap")}catch(e){} goNav(1); };
     root.appendChild(trail);
   }
   if(S.notifOpen) root.appendChild(viewNotif());
@@ -3015,6 +3135,7 @@ function render(fromSchedule){
   if(S.toast) root.appendChild(el(`<div class="toast">${esc(S.toast)}</div>`));
   if(S.slideFs&&S.segment==="slides") root.appendChild(viewFs());
   maybeScrollTopAfterNav();
+  try{ pushNav(); }catch(e){}
   _authQuiet=false;
   } catch(err){
     console.error("render", err);
@@ -3212,11 +3333,11 @@ function lineageNameHtml(t){
 
 const GUIDE_CATS=[
   {id:"all",label:"전체"},
-  {id:"pet-crab",label:"애완용 게 관련"},
-  {id:"crab",label:"게 관련"},
-  {id:"crayfish",label:"가재 관련"},
-  {id:"shrimp",label:"새우 관련"},
-  {id:"other",label:"기타 십각류 관련"}
+  {id:"crab",label:"게"},
+  {id:"crayfish",label:"가재"},
+  {id:"shrimp",label:"새우"},
+  {id:"other",label:"기타 십각류"},
+  {id:"pet-crab",label:"애완용 게"}
 ];
 const GUIDE_SORTS=[{id:"hot",label:"인기 순"},{id:"new",label:"최신순"}];
 function guideCatLabel(id){ return (GUIDE_CATS.find(c=>c.id===id)||{}).label || id || "기타"; }
@@ -3272,6 +3393,56 @@ function foldSection(title, count, bodyEl){
   box.appendChild(head); box.appendChild(body);
   return box;
 }
+function descendantCatalog(root){
+  if(!root) return [];
+  const wantBreed=typeof SITE_KIND!=="undefined" && SITE_KIND==="crayfish";
+  const out=[]; const stack=[root.id]; const seen=new Set();
+  while(stack.length){
+    const id=stack.pop();
+    if(!id || seen.has(id)) continue;
+    seen.add(id);
+    childrenOf(id).filter(lifeVisible).forEach(ch=>{
+      if((ch.rank==="species" || (wantBreed && ch.rank==="breed")) && ch.profileImageUrl) out.push(ch);
+      stack.push(ch.id);
+    });
+  }
+  return out.sort((a,b)=>String(a.scientificName||"").localeCompare(String(b.scientificName||"")));
+}
+function appendDescendantCatalog(panel, taxon){
+  const list=descendantCatalog(taxon);
+  if(!list.length) return;
+  const key=taxon.id;
+  if(!S.descPage) S.descPage={};
+  const per=32;
+  const pages=Math.max(1, Math.ceil(list.length/per));
+  if((S.descPage[key]||0)>=pages) S.descPage[key]=pages-1;
+  if((S.descPage[key]||0)<0) S.descPage[key]=0;
+  const page=S.descPage[key]||0;
+  const slice=list.slice(page*per, page*per+per);
+  const box=el(`<div style="margin-top:1.15rem"></div>`);
+  box.appendChild(el(`<div style="display:flex;justify-content:space-between;align-items:end;gap:.5rem;flex-wrap:wrap"><div><div class="side-title">Catalog</div><h2 class="gold-text" style="margin:0">하위 종 목록</h2></div><span class="muted">${list.length}${typeof SITE_KIND!=="undefined"&&SITE_KIND==="crayfish"?"건":"종"}</span></div>`));
+  const grid=el(`<div class="sp-grid"></div>`);
+  slice.forEach(sp=>{
+    const lic=(sp.profileImageLicense||"").trim();
+    const cap=(sp.profileImageCaption||"").trim();
+    const under=lic?("© "+lic):(cap?cap:"");
+    const cell=el(`<button type="button" class="sp-cell"><div class="sp-cell-img"><img src="${esc(sp.profileImageUrl)}" alt="" loading="lazy" decoding="async"/></div><div class="sp-cell-name">${esc(displaySciName(sp))}</div>${under?`<div class="sp-cell-lic">${esc(under)}</div>`:`<div class="sp-cell-lic" style="opacity:.4">라이선스 미입력</div>`}</button>`);
+    cell.onclick=()=>{S.segment="taxonomy";S.view={kind:"taxon",id:sp.id};render();};
+    grid.appendChild(cell);
+  });
+  box.appendChild(grid);
+  if(pages>1){
+    const pager=el(`<div class="sp-pager"></div>`);
+    const prev=el(`<button type="button" class="btn btn-line">이전</button>`);
+    const next=el(`<button type="button" class="btn btn-line">다음</button>`);
+    prev.disabled=page<=0; next.disabled=page>=pages-1;
+    prev.onclick=()=>{ S.descPage[key]=Math.max(0,page-1); render(); };
+    next.onclick=()=>{ S.descPage[key]=Math.min(pages-1,page+1); render(); };
+    pager.appendChild(prev); pager.appendChild(el(`<span class="muted">${page+1} / ${pages}</span>`)); pager.appendChild(next);
+    box.appendChild(pager);
+  }
+  panel.appendChild(box);
+}
 function appendRelatedGuides(panel, taxon){
   if(!panel || !taxon) return;
   const guides=sortedGuides(guidesForTaxon(taxon.id));
@@ -3283,7 +3454,7 @@ function appendRelatedGuides(panel, taxon){
     b.onclick=()=>{ S.segment="guides"; S.guideId=g.id; render(); };
     gbody.appendChild(b);
   });
-  box.appendChild(foldSection("관련 공유 가이드", guides.length, gbody));
+  box.appendChild(foldSection("커뮤니티 가이드", guides.length, gbody));
   panel.appendChild(box);
 }
 async function loadStars(){
@@ -3368,7 +3539,7 @@ function guidePhotoItems(){
     if(g.profile_image_url) urls.push(g.profile_image_url);
     guideBodyImages(g).forEach(im=>{ const u=typeof im==="string"?im:(im&&(im.url||im.src)); if(u) urls.push(u); });
     urls.forEach((url,i)=>{
-      out.push({id:"guideimg-"+g.id+"-"+i, rank:"guide", scientificName:g.title||"공유 가이드", koreanName:guideCatLabel(g.category), profileImageUrl:url, profileImageCaption:"", profileImageLicense:"", _guideId:g.id});
+      out.push({id:"guideimg-"+g.id+"-"+i, rank:"guide", scientificName:g.title||"커뮤니티 가이드", koreanName:guideCatLabel(g.category), profileImageUrl:url, profileImageCaption:"", profileImageLicense:"", _guideId:g.id});
     });
   });
   return out;
@@ -3455,11 +3626,19 @@ function guideThumb(g){
   }
   return "";
 }
+function defaultGuideCat(){
+  const kind=typeof SITE_KIND==="undefined"?"":SITE_KIND;
+  if(kind==="korean") return "crab";
+  if(kind==="ornamental") return "pet-crab";
+  if(kind==="crayfish") return "crayfish";
+  return "all";
+}
 function viewGuideList(){
   const panel=el(`<div class="panel"></div>`);
-  panel.appendChild(el(`<div class="side-title">Guides</div><h1 style="font-style:normal;margin:.2rem 0 .45rem">공유 가이드</h1><p class="muted" style="margin:0 0 .7rem">동정, 사육, 채집처럼 도감 주제에 관한 글을 올리고 댓글을 답니다. 고정 글이 맨 위에 옵니다.</p>`));
+  panel.appendChild(el(`<div class="side-title">Guides</div><h1 style="font-style:normal;margin:.2rem 0 .45rem">커뮤니티 가이드</h1><p class="muted" style="margin:0 0 .7rem">동정, 사육, 채집처럼 도감 주제에 관한 글을 올리고 댓글을 답니다. 고정 글이 맨 위에 옵니다.</p>`));
   const bar=el(`<div class="tabs-mini gallery-cats" style="margin:0 0 .45rem;display:flex;flex-wrap:nowrap;gap:.35rem;overflow-x:auto"></div>`);
-  const cat=S.guideCat||"all";
+  if(!S.guideCat) S.guideCat=defaultGuideCat();
+  const cat=S.guideCat;
   GUIDE_CATS.forEach(c=>{
     const on=cat===c.id;
     const b=el(`<button type="button" class="btn ${on?"btn-gold on":"btn-line"}" style="min-height:32px;font-size:.75rem;flex:0 0 auto;white-space:nowrap">${esc(c.label)}</button>`);
@@ -3480,7 +3659,7 @@ function viewGuideList(){
     add.onclick=()=>{ S.guideDraft={id:guideIdNew("g"), title:"", category:cat==="all"?"other":cat, body:"== 개요 ==\n", isNew:true, taxa:[]}; render(); };
     panel.appendChild(add);
   } else panel.appendChild(el(`<p class="muted" style="font-size:.82rem">글과 댓글은 로그인 후 작성할 수 있습니다.</p>`));
-  if(S._guideErr) panel.appendChild(el(`<div class="empty">공유 가이드 테이블 확인 필요 (SQL 실행)</div>`));
+  if(S._guideErr) panel.appendChild(el(`<div class="empty">커뮤니티 가이드 테이블 확인 필요 (SQL 실행)</div>`));
   const list=sortedGuides((S.guides||[]).filter(g=>cat==="all" || g.category===cat));
   if(!list.length) panel.appendChild(el(`<div class="empty">글 없음</div>`));
   list.forEach(g=>{
@@ -3505,7 +3684,7 @@ function guideTaxonPicker(box, draft){
       row.appendChild(rm); chosen.appendChild(row);
     });
   };
-  box.appendChild(el(`<div class="side-title" style="margin-top:.4rem">관련 종 · 계통</div>`));
+  box.appendChild(el(`<div class="side-title" style="margin-top:.4rem">종 · 계통</div>`));
   box.appendChild(chosen); paint();
   const q=el(`<label class="field"><span>검색해서 추가</span><input id="gq" placeholder="학명 · 국명" autocomplete="off"/></label>`);
   const hits=el(`<div></div>`);
@@ -3577,10 +3756,8 @@ function viewGuideDetail(id){
   const w=el(`<div class="panel"></div>`);
   if(!g){ w.appendChild(el(`<p>글을 찾을 수 없습니다.</p>`)); const back=el(`<button class="btn btn-ghost" id="back">목록</button>`); back.onclick=()=>{S.guideId=null;render();}; w.appendChild(back); return w; }
   bumpGuideView(g);
-  const back=el(`<button type="button" class="btn btn-line" style="min-height:32px;margin-bottom:.55rem">목록</button>`);
-  back.onclick=()=>{ S.guideId=null; render(); };
-  w.appendChild(back);
-  w.appendChild(el(`<div class="side-title">${esc(guideCatLabel(g.category))}${g.pinned?" · 고정":""}</div><h1 style="font-style:normal;margin:.15rem 0 .3rem">${esc(g.title)}</h1><p class="muted" style="font-size:.8rem;margin:0 0 .7rem">${esc(g.author_name||"")} · ${(g.updated_at||g.created_at||"").slice(0,10)} · ${esc(guideMeta(g))}</p>`));
+  w.appendChild(el(`<h1 style="font-style:normal;margin:.1rem 0 .45rem">${esc(g.title)}</h1>`));
+  w.appendChild(el(`<div class="side-title">${esc(guideCatLabel(g.category))}${g.pinned?" · 고정":""}</div><p class="muted" style="font-size:.8rem;margin:.15rem 0 .7rem">${esc(g.author_name||"")} · ${(g.updated_at||g.created_at||"").slice(0,10)} · ${esc(guideMeta(g))}</p>`));
   const actions=el(`<div style="display:flex;flex-wrap:wrap;align-items:center;gap:.4rem;margin-bottom:.75rem"></div>`);
   if(guideCanEdit(g)){
     const edit=el(`<button type="button" class="btn btn-line" style="min-height:32px;font-size:.78rem;padding:.15rem .65rem">수정</button>`);
@@ -3598,7 +3775,7 @@ function viewGuideDetail(id){
   const del=el(`<button type="button" class="btn btn-ghost" style="min-height:32px;font-size:.78rem;margin-left:auto">${isLogged()?"삭제":"삭제 문의"}</button>`);
   del.onclick=async()=>{
     if(!isLogged()){
-      S.modal={type:"report",kind:"suggestion",preset:`[공유 가이드 삭제 문의] ${g.title} (id:${g.id})`};
+      S.modal={type:"report",kind:"suggestion",preset:`[커뮤니티 가이드 삭제 문의] ${g.title} (id:${g.id})`};
       render();
       return;
     }
@@ -3612,10 +3789,10 @@ function viewGuideDetail(id){
   actions.appendChild(del);
   w.appendChild(actions);
   if(g.profile_image_url) w.appendChild(el(`<div class="guide-thumb" style="width:120px;height:120px;margin:0 0 .7rem">${`<img src="${esc(g.profile_image_url)}" alt=""/>`}</div>`));
-  w.appendChild(buildWikiDom({id:g.id, description:g.body||"", bodyImages:guideBodyImages(g), _bodyLoaded:true}));
+  w.appendChild(buildWikiDom({id:g.id, description:g.body||"", bodyImages:guideBodyImages(g), _bodyLoaded:true, _isGuide:true}));
   const links=(S._guideLinks||[]).filter(r=>r.guide_id===g.id);
   const rel=el(`<div style="margin-top:1rem"></div>`);
-  rel.appendChild(el(`<h2 style="color:var(--gold)">관련 종 · 계통</h2>`));
+  rel.appendChild(el(`<h2 style="color:var(--gold)">종 · 계통</h2>`));
   if(!links.length) rel.appendChild(el(`<div class="empty">없음</div>`));
   links.forEach(r=>{
     const t=S.taxa&&S.taxa[r.taxon_id];
@@ -3625,6 +3802,9 @@ function viewGuideDetail(id){
   });
   w.appendChild(rel);
   w.appendChild(guideCommentBox(g));
+  const back=el(`<button type="button" class="btn btn-line" style="width:100%;min-height:40px;margin-top:1rem">목록</button>`);
+  back.onclick=()=>{ S.guideId=null; render(); };
+  w.appendChild(back);
   return w;
 }
 async function notifyGuideAuthor(g, text){
@@ -3639,8 +3819,8 @@ async function notifyGuideAuthor(g, text){
   }catch(e){ console.warn("guide notify", e); }
 }
 function guideCommentBox(g){
-  const box=el(`<div style="margin-top:1.1rem"></div>`);
-  const head=el(`<div style="display:flex;align-items:center;gap:.5rem;margin-top:.4rem"></div>`);
+  const box=el(`<div class="gc-wrap"></div>`);
+  const head=el(`<div style="display:flex;align-items:center;gap:.5rem"></div>`);
   head.appendChild(el(`<h2 style="color:var(--gold);margin:0">댓글</h2>`));
   const like=el(`<button type="button" class="btn ${S.guideLikes&&S.guideLikes[g.id]?"btn-gold on":"btn-line"}" style="min-height:30px;font-size:.78rem;margin-left:auto;padding:.1rem .65rem">${S.guideLikes&&S.guideLikes[g.id]?"♥":"♡"} ${Number(g.likes)||0}</button>`);
   like.onclick=async()=>{
@@ -3659,22 +3839,32 @@ function guideCommentBox(g){
   };
   head.appendChild(like);
   box.appendChild(head);
-  const list=el(`<div class="muted">불러오는 중…</div>`);
+  const list=el(`<div class="muted" style="margin-top:.45rem">불러오는 중…</div>`);
   box.appendChild(list);
   const paint=(rows)=>{
     list.innerHTML="";
-    if(!rows.length){ list.appendChild(el(`<div class="empty">댓글 없음</div>`)); return; }
+    if(!rows.length) list.appendChild(el(`<div class="empty">아직 댓글이 없습니다</div>`));
     const byParent={};
     rows.forEach(c=>{ const k=c.parent_id||""; (byParent[k]=byParent[k]||[]).push(c); });
     const draw=(parent, depth)=>{
       (byParent[parent]||[]).forEach(c=>{
-        const item=el(`<div style="margin:${depth?".35rem":".7rem"} 0 .7rem ${depth*1.05}rem;padding-left:.7rem;border-left:2px solid color-mix(in oklab,var(--gold) ${depth?18:32}%,transparent)"></div>`);
-        item.appendChild(el(`<div style="font-size:.82rem"><b>${esc(c.author_name||"")}</b> <span class="muted" style="font-size:.72rem">${esc((c.created_at||"").slice(0,16).replace("T"," "))}</span></div>`));
-        item.appendChild(el(`<div style="margin-top:.2rem;white-space:pre-wrap;font-size:.9rem;line-height:1.45">${esc(c.body||"")}</div>`));
-        const acts=el(`<div style="display:flex;gap:.55rem;margin-top:.2rem"></div>`);
+        const name=c.author_name||"익명";
+        const item=el(`<div class="gc-card ${depth?"reply":""}"></div>`);
+        item.appendChild(el(`<div class="gc-who"><span class="gc-av">${esc(name.slice(0,1))}</span><div><b>${esc(name)}</b><div class="muted" style="font-size:.72rem">${esc((c.created_at||"").slice(0,16).replace("T"," "))}</div></div></div>`));
+        const bodyTxt=c.body||"";
+        const bodyEl=el(`<div class="gc-body">${esc(bodyTxt)}</div>`);
+        const long=bodyTxt.split("\n").length>6 || bodyTxt.length>220;
+        if(long) bodyEl.classList.add("shut");
+        item.appendChild(bodyEl);
+        if(long){
+          const more=el(`<button type="button" class="btn btn-ghost gc-more">펼치기</button>`);
+          more.onclick=()=>{ bodyEl.classList.toggle("shut"); more.textContent=bodyEl.classList.contains("shut")?"펼치기":"접기"; };
+          item.appendChild(more);
+        }
+        const acts=el(`<div style="display:flex;gap:.55rem;margin-top:.35rem"></div>`);
         if(isLogged()){
-          const reply=el(`<button type="button" class="btn btn-ghost" style="min-height:24px;font-size:.72rem;padding:0">답글</button>`);
-          reply.onclick=()=>{ S.guideReplyTo=c.id; render(); };
+          const reply=el(`<button type="button" class="btn btn-ghost" style="min-height:24px;font-size:.72rem;padding:0;color:var(--gold-soft)">답글</button>`);
+          reply.onclick=()=>{ S.guideReplyTo=S.guideReplyTo===c.id?null:c.id; render(); };
           acts.appendChild(reply);
         }
         if(isLogged() && (isAdmin() || c.author_id===S.session?.user?.id)){
@@ -3688,8 +3878,10 @@ function guideCommentBox(g){
         }
         item.appendChild(acts);
         if(S.guideReplyTo===c.id && isLogged()){
-          const ta=el(`<textarea rows="2" placeholder="답글" style="width:100%;margin-top:.35rem"></textarea>`);
-          const send=el(`<button type="button" class="btn btn-gold" style="margin-top:.3rem">답글 등록</button>`);
+          const ta=el(`<textarea rows="1" placeholder="답글을 입력하세요"></textarea>`);
+          const grow=()=>{ ta.style.height="2.4rem"; ta.style.height=Math.min(ta.scrollHeight, 128)+"px"; };
+          ta.addEventListener("input", grow);
+          const send=el(`<button type="button" class="btn btn-gold" style="margin-top:.35rem">답글 등록</button>`);
           send.onclick=async()=>{
             const body=(ta.value||"").trim(); if(!body) return;
             try{
@@ -3713,9 +3905,12 @@ function guideCommentBox(g){
       paint(data||[]);
     }catch(e){ list.innerHTML=`<div class="empty">댓글 테이블 확인 필요</div>`; }
   })();
+  const compose=el(`<div class="gc-compose" style="margin-top:.7rem"></div>`);
   if(isLogged()){
-    const ta=el(`<textarea id="gcbody" rows="3" placeholder="댓글" style="width:100%;margin-top:.5rem"></textarea>`);
-    const send=el(`<button type="button" class="btn btn-gold" style="margin-top:.4rem">댓글 달기</button>`);
+    const ta=el(`<textarea id="gcbody" rows="1" placeholder="댓글을 입력하세요"></textarea>`);
+    const grow=()=>{ ta.style.height="2.4rem"; ta.style.height=Math.min(ta.scrollHeight, 128)+"px"; };
+    ta.addEventListener("input", grow);
+    const send=el(`<button type="button" class="btn btn-gold" style="margin-top:.45rem">댓글 달기</button>`);
     send.onclick=async()=>{
       const body=(ta.value||"").trim(); if(!body) return;
       try{
@@ -3724,8 +3919,9 @@ function guideCommentBox(g){
         toast("댓글 등록"); render();
       }catch(e){ alert(e.message||e); }
     };
-    box.appendChild(ta); box.appendChild(send);
-  }
+    compose.appendChild(ta); compose.appendChild(send);
+  } else compose.appendChild(el(`<p class="muted" style="margin:.2rem 0 0">댓글은 로그인 후 작성할 수 있습니다.</p>`));
+  box.appendChild(compose);
   return box;
 }
 
@@ -3890,6 +4086,7 @@ function viewTaxon(taxon){
     }
   }catch(e){}
   try{ appendRelatedGuides(panel, taxon); }catch(e){}
+  try{ appendDescendantCatalog(panel, taxon); }catch(e){}
   w.appendChild(panel); return w;
 }
 function stopSlideTimer(){ if(S.slideTimer){ clearInterval(S.slideTimer); S.slideTimer=null; } }
@@ -4020,7 +4217,7 @@ function viewSlides(){
         mediaProf.push({url:t.profileImageUrl, title:displaySciName(t)||"", sub:t.koreanName||"프로필", lic:t.profileImageLicense||"", cap:t.profileImageCaption||"", id:t.id, kind:"profile"});
       }
     });
-    const media=mediaBody.concat(mediaProf);
+    const media=shuffleStable(mediaBody.concat(mediaProf), "media", m=>m.kind+"-"+m.id+"-"+(m.idx||0));
     const gal=el(`<div class="media-gallery"></div>`);
     gal.appendChild(el(`<h2>미디어 자료 <span class="muted" style="font-size:.8rem;font-weight:400">· ${media.length}점</span></h2>`));
     if(!media.length){
@@ -5918,9 +6115,13 @@ function viewModal(){
   }
   else if(m.type==="block"){ modal.innerHTML=`<h2 class="gold" style="font-family:var(--serif);margin-top:0">차단</h2><label class="field"><span>유형</span><select id="ty"><option value="user">user</option><option value="ip">ip</option></select></label><label class="field"><span>값</span><input id="tg"/></label><label class="field"><span>사유</span><textarea id="rs"></textarea></label><div style="display:flex;gap:.5rem;justify-content:flex-end"><button class="btn btn-ghost" id="c">취소</button><button class="btn btn-danger" id="go">차단</button></div>`; modal.querySelector("#c").onclick=close; modal.querySelector("#go").onclick=async()=>{ if(!isMod()) return; const ty=modal.querySelector("#ty").value,tg=modal.querySelector("#tg").value.trim(); let profile=null; if(ty==="user"){ const {data}=await sb.from("profiles").select("*").eq("id",tg).maybeSingle(); profile=data; } const deny=cannotBlock(profile,ty==="ip"?tg:null); if(deny) return alert(deny); const {error}=await sb.from("blocks").insert({target_type:ty,target_user_id:ty==="user"?tg:null,target_ip:ty==="ip"?tg:null,reason:modal.querySelector("#rs").value,created_by:S.session.user.id,active:true}); if(error) return alert(error.message); if(ty==="user") await sb.from("profiles").update({is_blocked:true,block_reason:modal.querySelector("#rs").value}).eq("id",tg); toast("차단"); close(); }; }
   else if(m.type==="sectionEdit"){
-    const tax=S.taxa[m.taxonId]; if(!tax){ modal.innerHTML=`<p>문서 없음</p>`; modal.appendChild(Object.assign(el(`<button class="btn btn-ghost">닫기</button>`),{onclick:close})); }
+    const isGuide=m.kind==="guide";
+    const tax=isGuide?(S.guides||[]).find(x=>x.id===m.taxonId):S.taxa[m.taxonId];
+    if(!tax){ modal.innerHTML=`<p>문서 없음</p>`; modal.appendChild(Object.assign(el(`<button class="btn btn-ghost">닫기</button>`),{onclick:close})); }
+    else if(!isGuide && !tax._bodyLoaded){ modal.innerHTML=`<p class="muted">본문을 불러오는 중…</p>`; ensureTaxonBody(tax.id).then(()=>render()); }
     else {
-      const sections=parseWikiSections(tax.description||"");
+      const src=isGuide?(tax.body||""):(tax.description||"");
+      const sections=parseWikiSections(src);
       const sec=sections[m.sectionIndex];
       if(!sec){ modal.innerHTML=`<p>문단 없음</p>`; }
       else {
@@ -5938,7 +6139,16 @@ function viewModal(){
           const lines=bodyTxt.split("\n");
           const next=sections.map((s,i)=>i===m.sectionIndex?{title:title||null,level:title?(sec.level||2):0,start:sec.start,lines}:s);
           const desc=rebuildDescription(next);
-          try{ await saveTaxon({...tax, description:desc}, "문단 수정: "+(title||"서문")); toast("문단 저장"); close(); }
+          try{
+            if(isGuide){
+              const {error}=await sb.from("share_guides").update({body:desc, updated_at:new Date().toISOString()}).eq("id", tax.id);
+              if(error) throw error;
+              tax.body=desc;
+            } else {
+              await saveTaxon({...tax, description:desc}, "문단 수정: "+(title||"서문"));
+            }
+            toast("문단 저장"); close();
+          }
           catch(e){ alert(e.message||e); }
         };
       }
