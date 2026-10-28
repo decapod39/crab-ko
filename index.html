@@ -828,6 +828,9 @@ body.boot-ready #root{/* visible */}
   padding-left: 1rem;
 }
 
+
+.lex-nudge{animation:lexGlow 1.6s ease; outline:2px solid var(--gold); border-radius:10px;}
+@keyframes lexGlow{0%,100%{box-shadow:0 0 0 0 rgba(184,149,46,0)}40%{box-shadow:0 0 18px 4px rgba(184,149,46,.75)} }
 </style>
 
 
@@ -973,7 +976,7 @@ function validParentRanks(rank){
   return [];
 }
 
-const SEGS = [{id:"home",label:"홈"},{id:"taxonomy",label:"계통분류"},{id:"guides",label:"커뮤니티 가이드"},{id:"slides",label:"갤러리"},{id:"chat",label:"토론"},{id:"rankings",label:"기여 순위"},{id:"mypage",label:"마이"}];
+const SEGS = [{id:"home",label:"홈"},{id:"taxonomy",label:"계통분류"},{id:"guides",label:"커뮤니티 가이드"},{id:"slides",label:"갤러리"},{id:"chat",label:"토론"},{id:"lexicon",label:"용어사전"},{id:"rankings",label:"기여 순위"},{id:"mypage",label:"마이"}];
 
 let _prevTaxonId=null;
 let _bootRitualDone=false;
@@ -1391,6 +1394,11 @@ function appendSubfamilyGenusTree(container, familyTaxon){
 function childrenOf(pid){ return Object.values(S.taxa).filter(t=>t.parentId===pid).sort((a,b)=>RANK_ORDER.indexOf(a.rank)-RANK_ORDER.indexOf(b.rank)||(a.catalogNo??999)-(b.catalogNo??999)||a.scientificName.localeCompare(b.scientificName)); }
 function ancestorsOf(id){ const c=[]; let cur=S.taxa[id]; const g=new Set(); while(cur&&!g.has(cur.id)){ c.unshift(cur); g.add(cur.id); cur=cur.parentId?S.taxa[cur.parentId]:null; } return c; }
 function findBySci(n){ n=(n||"").trim().toLowerCase(); return Object.values(S.taxa).find(t=>t.scientificName.toLowerCase()===n); }
+function findLexByName(n){
+  n=(n||"").trim().toLowerCase();
+  if(!n) return null;
+  return (S.lexicon||[]).find(e=>[e.title,e.korean_name,e.scientific_name].some(v=>String(v||"").trim().toLowerCase()===n));
+}
 function superfamilies(){ return Object.values(S.taxa).filter(t=>t.rank==="superfamily" && isBrachyura(t)).sort((a,b)=>(a.catalogNo??0)-(b.catalogNo??0)); }
 function shuffleOnce(list, key){
   const ids=list.map(t=>t.id);
@@ -1622,6 +1630,11 @@ function buildWikiDom(taxon){
         render();
         return;
       }
+      if(taxon._isLex){
+        S.modal={type:"sectionEdit",kind:"lex",taxonId:taxon.id,sectionIndex:si};
+        render();
+        return;
+      }
       await ensureTaxonBody(taxon.id);
       S.modal={type:"sectionEdit",kind:"taxon",taxonId:taxon.id,sectionIndex:si};
       render();
@@ -1634,7 +1647,11 @@ function buildWikiDom(taxon){
     wrap.appendChild(block);
   });
   wrap.querySelectorAll("a.wiki-link[data-id]").forEach(a=>{
-    a.addEventListener("click",e=>{ e.preventDefault(); S.segment="taxonomy"; S.view={kind:"taxon",id:a.getAttribute("data-id")}; render(); });
+    a.addEventListener("click",e=>{ e.preventDefault();
+      const id=a.getAttribute("data-id");
+      if(a.getAttribute("data-kind")==="lex"){ S.segment="lexicon"; S.view=null; S.lexId=id; S.lexEdit=null; }
+      else { S.segment="taxonomy"; S.view={kind:"taxon",id}; }
+      render(); });
   });
   return wrap;
 }
@@ -1650,9 +1667,12 @@ function inline(text){
   s=s.replace(/\[(https?:\/\/[^\s\]]+)\s+([^\]]+)\]/g,(_,u,l)=>`<a href="${u}" target="_blank" rel="noopener noreferrer" style="color:var(--gold-hi);text-decoration:underline">${l}</a>`);
   s=s.replace(/\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/g,(_,t,l)=>{
     if(/^파일:/i.test(t)) return esc("[["+t+"]]");
-    const hit=findBySci(t.trim());
-    const d=l?l:esc(t.trim());
-    return hit?`<a class="wiki-link" data-id="${esc(hit.id)}">${d}</a>`:`<span style="color:var(--danger)">${d}</span>`;
+    const name=t.trim();
+    const lex=findLexByName(name);
+    const hit=lex?null:findBySci(name);
+    const d=l?esc(l):esc(name);
+    if(lex) return `<a class="wiki-link" data-kind="lex" data-id="${esc(lex.id)}">${d}</a>`;
+    return hit?`<a class="wiki-link" data-kind="taxon" data-id="${esc(hit.id)}">${d}</a>`:`<span style="color:var(--danger)">${d}</span>`;
   });
   return s;
 }
@@ -1906,19 +1926,28 @@ async function loadAll(){
     const taxaSelectSlim="id,rank,parent_id,scientific_name,korean_name,authority,profile_image_url,profile_image_caption,profile_image_license,body_images,catalog_no,is_extinct,is_fossil,in_ornamental";
     const taxaSelectMid="id,rank,parent_id,scientific_name,korean_name,authority,profile_image_url,profile_image_caption,body_images,catalog_no,in_ornamental";
     const taxaSelectNoMeta="id,rank,parent_id,scientific_name,korean_name,authority,profile_image_url,profile_image_caption,body_images,catalog_no";
-    let taxaRes=await sb.from("taxa").select(taxaSelectSlim);
+    async function fetchAllTaxa(select){
+      const out=[];
+      for(let from=0;;from+=1000){
+        const res=await sb.from("taxa").select(select).range(from, from+999);
+        if(res.error) return {data:out, error:res.error};
+        const rows=res.data||[];
+        out.push(...rows);
+        if(rows.length<1000) return {data:out, error:null};
+      }
+    }
+    let taxaRes=await fetchAllTaxa(taxaSelectSlim);
     if(taxaRes.error){
       console.warn("taxa slim 실패 → 재시도", taxaRes.error.message);
-      taxaRes=await sb.from("taxa").select(taxaSelectMid);
+      taxaRes=await fetchAllTaxa(taxaSelectMid);
     }
     if(taxaRes.error){
       console.warn("in_ornamental 없이 재시도", taxaRes.error.message);
-      taxaRes=await sb.from("taxa").select(taxaSelectNoMeta);
+      taxaRes=await fetchAllTaxa(taxaSelectNoMeta);
     }
-    const [{data:taxaRows,error:e1},{data:settings}]=[
-      taxaRes,
-      await sb.from("settings").select("key,value"),
-    ];
+    const taxaRows=taxaRes.data||[];
+    const e1=taxaRes.error;
+    const {data:settings}=await sb.from("settings").select("key,value");
     if(e1) throw e1;
     let taxa={}; for(const r of taxaRows||[]){ if(r.id==="__wiki_config__") continue; const t=rowToTaxon(r); t._bodyLoaded=false; t.description=t.description||""; taxa[r.id]=t; }
     taxa=await seedIfEmpty(taxa);
@@ -1953,7 +1982,7 @@ async function loadAll(){
     const cfg=(taxaRows||[]).find(r=>r.id==="__wiki_config__");
     if(cfg?.description){ try{ const j=JSON.parse(cfg.description); if(j.edit_password) S.guestPw=j.edit_password; }catch{} }
     await refreshSession();
-    try{ await loadShareGuides(); await loadStars(); }catch(e){}
+    try{ await loadShareGuides(); await loadLexicon(); await loadStars(); }catch(e){}
     S.ready=true; try{document.body.classList.add("boot-ready")}catch(e){} try{pushAppState(true);}catch(e){};
     S.loading=false;
     try{ window.__bootMsg && __bootMsg("화면 그리는 중…"); }catch(e){}
@@ -2414,6 +2443,8 @@ async function saveTaxon(taxon,summary){
     const dropped=[...oldUrls].filter(u=>u && !keep.has(u));
     if(dropped.length){ try{ await deleteStorageUrls(dropped); }catch(e){ console.warn("stale image delete", e); } }
   }
+  const prevKeep=S.taxa[taxon.id];
+  if(prevKeep && !taxon.parentId && prevKeep.parentId) taxon.parentId=prevKeep.parentId;
   let row=taxonToRow(taxon);
   let {error}=await sb.from("taxa").upsert(row);
   if(error && /profile_image_license|column/i.test(error.message||"")){
@@ -2715,6 +2746,9 @@ function appStateSnapshot(){
     chatMode:S.chatMode||"public",
     slideFs:!!S.slideFs,
     speciesPage:S.speciesPage||0,
+    lexId:S.lexId||null,
+    lexEdit:!!S.lexEdit,
+    guideId:S.guideId||null,
     scroll: getScrollY()
   };
 }
@@ -2727,13 +2761,17 @@ function applyAppState(st){
   if(st.chatMode) S.chatMode=st.chatMode;
   S.slideFs=!!st.slideFs;
   if(typeof st.speciesPage==="number") S.speciesPage=st.speciesPage;
+  if("lexId" in st) S.lexId=st.lexId||null;
+  if("guideId" in st) S.guideId=st.guideId||null;
+  if(st.lexEdit) S.lexEdit=S.lexEdit||null; else S.lexEdit=null;
   if(st.scroll) S._restoreScroll=st.scroll;
 }
 function stateToHash(st){
   try{
     const seg=st.segment||"home";
     let h="#/"+encodeURIComponent(seg);
-    if(st.view&&st.view.id) h+="/"+encodeURIComponent(st.view.id);
+    if(seg==="lexicon" && st.lexId) h+="/"+encodeURIComponent(st.lexId);
+    else if(st.view&&st.view.id) h+="/"+encodeURIComponent(st.view.id);
     return h;
   }catch(e){ return "#/home"; }
 }
@@ -2743,18 +2781,19 @@ function parseHashToState(){
     if(!raw) return null;
     const parts=raw.split("/").filter(Boolean).map(p=>{ try{return decodeURIComponent(p);}catch(e){return p;}});
     const segment=parts[0]||"home";
-    const allowed=["home","taxonomy","slides","chat","rankings","options"];
+    const allowed=["home","taxonomy","guides","slides","chat","lexicon","rankings","mypage","options"];
     const seg=allowed.includes(segment)?segment:"home";
-    const view=parts[1]?{kind:"taxon",id:parts[1]}:null;
-    return {segment:seg, view, modal:null, notifOpen:false, slideFs:false};
+    const lexId=seg==="lexicon"&&parts[1]?parts[1]:null;
+    const view=seg!=="lexicon"&&parts[1]?{kind:"taxon",id:parts[1]}:null;
+    return {segment:seg, view, lexId, guideId:null, modal:null, notifOpen:false, slideFs:false};
   }catch(e){ return null; }
 }
 function navSnap(){
-  return {segment:S.segment||"home", view:S.view?{...S.view}:null, guideId:S.guideId||null};
+  return {segment:S.segment||"home", view:S.view?{...S.view}:null, guideId:S.guideId||null, lexId:S.lexId||null};
 }
 function navSame(a,b){
   if(!a||!b) return false;
-  return a.segment===b.segment && (a.guideId||null)===(b.guideId||null) && JSON.stringify(a.view||null)===JSON.stringify(b.view||null);
+  return a.segment===b.segment && (a.guideId||null)===(b.guideId||null) && (a.lexId||null)===(b.lexId||null) && JSON.stringify(a.view||null)===JSON.stringify(b.view||null);
 }
 function pushNav(){
   if(S._navQuiet || !S.entered) return;
@@ -2777,6 +2816,8 @@ function goNav(delta){
   S.segment=st.segment||"home";
   S.view=st.view||null;
   S.guideId=st.guideId||null;
+  S.lexId=st.lexId||null;
+  S.lexEdit=null;
   S.modal=null; S.notifOpen=false; S.slideFs=false;
   render();
   S._navQuiet=false;
@@ -3041,7 +3082,14 @@ function render(fromSchedule){
   };
   tqi.oninput=runTop; tqi.onfocus=runTop;
   tqi.addEventListener("keydown",e=>{ if(e.key==="Escape"){ tqr.classList.remove("open"); tqi.blur(); }});
-  document.addEventListener("click",(ev)=>{ if(!tsw.contains(ev.target)) tqr.classList.remove("open"); }, {once:false});
+  if(!window.__atlasTopSearchOutsideClickBound){
+    window.__atlasTopSearchOutsideClickBound=true;
+    document.addEventListener("click",(ev)=>{
+      const currentWrap=document.querySelector(".top-search");
+      const currentResults=document.getElementById("topqr");
+      if(currentWrap && currentResults && !currentWrap.contains(ev.target)) currentResults.classList.remove("open");
+    });
+  }
   chrome.appendChild(tsw);
 
   
@@ -3100,6 +3148,7 @@ function render(fromSchedule){
   else if(S.segment==="guides") main.appendChild(viewGuides());
   else if(S.segment==="slides") main.appendChild(isBlocked()?el(`<div class="panel"><p>차단 중에는 이용할 수 없습니다.</p></div>`):viewSlides());
   else if(S.segment==="chat") main.appendChild(viewChat());
+  else if(S.segment==="lexicon") main.appendChild(viewLexicon());
   else if(S.segment==="mypage") main.appendChild(viewMyPage());
   else if(S.segment==="rankings") main.appendChild(isBlocked()?el(`<div class="panel"><p>차단 중에는 이용할 수 없습니다.</p></div>`):viewRanks());
   else if(S.segment==="options") main.appendChild(viewOpts());
@@ -3142,7 +3191,7 @@ function render(fromSchedule){
     try{ root.innerHTML=`<div class="main" style="padding:2rem"><div class="panel"><h1 style="font-style:normal;color:#c66">화면 오류</h1><pre style="white-space:pre-wrap;font-size:.8rem">${esc(String(err&&err.stack||err))}</pre><button class="btn btn-gold" onclick="location.reload()">새로고침</button></div></div>`; }catch(e){}
   }
 
-  root.querySelectorAll("a.wiki-link[data-id]").forEach(a=>a.addEventListener("click",e=>{e.preventDefault();S.segment="taxonomy";S.view={kind:"taxon",id:a.getAttribute("data-id")};render();}));
+  root.querySelectorAll("a.wiki-link[data-id]").forEach(a=>a.addEventListener("click",e=>{e.preventDefault();const id=a.getAttribute("data-id");if(a.getAttribute("data-kind")==="lex"){S.segment="lexicon";S.view=null;S.lexId=id;S.lexEdit=null;}else{S.segment="taxonomy";S.view={kind:"taxon",id};}render();}));
 }
 
 
@@ -3558,12 +3607,16 @@ function guidePhotoFields(panel, draft){
   const prev=el(`<div class="guide-thumb" style="width:88px;height:88px;margin:.3rem 0">${draft.profile_image_url?`<img src="${esc(draft.profile_image_url)}" alt=""/>`:`<span class="guide-x">✕</span>`}</div>`);
   const row=el(`<div style="display:flex;gap:.4rem;flex-wrap:wrap"></div>`);
   const file=el(`<label class="btn btn-line" style="min-height:32px">프로필 선택<input type="file" accept="image/*" hidden></label>`);
-  file.querySelector("input").onchange=(e)=>{
+  file.querySelector("input").onchange=async(e)=>{
     const f=e.target.files?.[0]; if(!f) return;
-    if(f.size>1400000){ toast("이미지는 1.4MB 이하로"); return; }
-    const rd=new FileReader();
-    rd.onload=()=>{ draft.profile_image_url=rd.result; prev.innerHTML=`<img src="${draft.profile_image_url}" alt=""/>`; };
-    rd.readAsDataURL(f);
+    if(f.size>8e6){ toast("8MB 이하로"); return; }
+    try{
+      toast("사진 최적화 중…");
+      let data=await compressImageFile(f, 1024, 0.84);
+      if(data.length>480000) data=await compressImageFile(f, 1024, 0.72);
+      draft.profile_image_url=data;
+      prev.innerHTML=`<img src="${data}" alt=""/>`;
+    }catch(err){ toast("사진을 처리하지 못했습니다"); }
   };
   const clear=el(`<button type="button" class="btn btn-ghost" style="min-height:32px">빼기</button>`);
   clear.onclick=()=>{ draft.profile_image_url=""; prev.innerHTML=`<span class="guide-x">✕</span>`; };
@@ -3592,16 +3645,638 @@ function guidePhotoFields(panel, draft){
   };
   paint();
   const add=el(`<label class="btn btn-line" style="min-height:32px;margin-top:.35rem">본문 사진 추가<input type="file" accept="image/*" hidden></label>`);
-  add.querySelector("input").onchange=(e)=>{
+  add.querySelector("input").onchange=async(e)=>{
     const f=e.target.files?.[0]; if(!f) return;
-    if(f.size>1400000){ toast("이미지는 1.4MB 이하로"); return; }
-    const rd=new FileReader();
-    rd.onload=()=>{ draft.body_images.push({url:rd.result, caption:""}); paint(); };
-    rd.readAsDataURL(f);
+    if(f.size>8e6){ toast("8MB 이하로"); return; }
+    try{
+      toast("사진 최적화 중…");
+      let data=await compressImageFile(f, 1024, 0.84);
+      if(data.length>520000) data=await compressImageFile(f, 1024, 0.72);
+      draft.body_images.push({url:data, caption:""});
+      paint();
+    }catch(err){ toast("사진을 처리하지 못했습니다"); }
   };
   box.appendChild(blist); box.appendChild(add);
   panel.appendChild(box);
 }
+
+const LEX_KINDS=[{id:"body",label:"신체 부위"},{id:"physio",label:"발생·생리"},{id:"behavior",label:"행동"}];
+const SYM_KINDS=[{id:"symbiont",label:"바이러스·기생충·공생체"}];
+function buildLexGroups(){
+  if(!S.taxa) return [];
+  const groups=[];
+  const seen=new Set();
+  // 수상새아목 (Dendrobranchiata)
+  const dendro=Object.values(S.taxa).find(t=>t && t.rank==="suborder" && /dendrobranchiata/i.test(t.scientificName||""));
+  if(dendro && !seen.has(dendro.id)){
+    seen.add(dendro.id);
+    groups.push({id:dendro.id, label:dendro.koreanName||"수상새아목", taxon:dendro.id, sci:dendro.scientificName});
+  }
+  // 범배아목 하위 모든 하목
+  Object.values(S.taxa).filter(t=>t && t.rank==="infraorder").forEach(inf=>{
+    if(seen.has(inf.id)) return;
+    // skip if under Dendrobranchiata
+    let cur=inf, g=0, underDendro=false;
+    const vis=new Set();
+    while(cur && g++<16 && !vis.has(cur.id)){
+      vis.add(cur.id);
+      if(/dendrobranchiata/i.test(cur.scientificName||"")) { underDendro=true; break; }
+      cur=cur.parentId && S.taxa[cur.parentId];
+    }
+    if(underDendro) return;
+    seen.add(inf.id);
+    groups.push({id:inf.id, label:inf.koreanName||inf.scientificName, taxon:inf.id, sci:inf.scientificName});
+  });
+  return groups.sort((a,b)=>(a.label||"").localeCompare(b.label||""));
+}
+function visibleLexGroups(){
+  const all=buildLexGroups();
+  if(typeof SITE_KIND!=="undefined" && SITE_KIND==="korean"){
+    return all.filter(g=>{
+      const t=S.taxa&&S.taxa[g.id];
+      return t && isBrachyura(t);
+    });
+  }
+  return all;
+}
+function lexAutoGroup(taxon){
+  if(!taxon) return null;
+  let cur=taxon, g=0; const seen=new Set();
+  while(cur && g++<24 && !seen.has(cur.id)){
+    seen.add(cur.id);
+    if(cur.rank==="suborder" || cur.rank==="infraorder"){
+      const groups=buildLexGroups();
+      const hit=groups.find(x=>x.id===cur.id || x.taxon===cur.id);
+      if(hit) return hit.id;
+    }
+    cur=S.taxa&&S.taxa[cur.parentId];
+  }
+  return null;
+}
+function lexEffectiveGroups(e){
+  const saved=lexGroups(e);
+  if(saved.length) return saved;
+  const out=[];
+  lexHosts(e.id).forEach(id=>{
+    const t=S.taxa&&S.taxa[id];
+    const g=t?lexAutoGroup(t):null;
+    if(g && !out.includes(g)) out.push(g);
+  });
+  return out;
+}
+function lexMatchesGroup(e, gid){
+  const gs=lexEffectiveGroups(e);
+  return gs.includes(gid);
+}
+function lexGroups(e){
+  if(!e||e.groups==null||e.groups==="") return [];
+  if(Array.isArray(e.groups)) return e.groups;
+  try{ const a=JSON.parse(e.groups); return Array.isArray(a)?a:[]; }catch(err){ return String(e.groups).split(",").map(s=>s.trim()).filter(Boolean); }
+}
+function lexGroupLabel(id){
+  const g=buildLexGroups().find(x=>x.id===id);
+  return g ? g.label : id;
+}
+const LEX_RANKS=["domain","kingdom","phylum","class","order","suborder","infraorder","superfamily","family","genus","species","clade"];
+const LEX_RANK_KO={domain:"역",kingdom:"계",phylum:"문",class:"강",order:"목",suborder:"아목",infraorder:"하목",superfamily:"상과",family:"과",genus:"속",species:"종",clade:"등급"};
+function isSymKind(id){ return SYM_KINDS.some(k=>k.id===id) || id==="symbiont"; }
+function lexKindLabel(id){ return (LEX_KINDS.concat(SYM_KINDS).find(k=>k.id===id)||{}).label||id; }
+function lexOf(id){ return (S.lexicon||[]).find(x=>x.id===id); }
+function lexHosts(id){
+  if(S._lexHostsByEntry instanceof Map) return S._lexHostsByEntry.get(id)||[];
+  return (S.lexLinks||[]).filter(r=>r.entry_id===id).map(r=>r.taxon_id);
+}
+function lexForTaxon(taxonId){
+  const ids=new Set();
+  let cur=taxonId, g=0;
+  while(cur && g++<16){
+    const linked=S._lexEntriesByTaxon instanceof Map
+      ? (S._lexEntriesByTaxon.get(cur)||[])
+      : (S.lexLinks||[]).filter(r=>r.taxon_id===cur).map(r=>r.entry_id);
+    linked.forEach(id=>ids.add(id));
+    const t=S.taxa&&S.taxa[cur];
+    cur=t&&t.parentId;
+  }
+  return [...ids].map(lexOf).filter(Boolean);
+}
+function lexKids(id){ return (S.lexicon||[]).filter(x=>isSymKind(x.kind)&&x.parent_id===id); }
+function lexTitle(e){
+  if(!e) return "";
+  if(isSymKind(e.kind)) return e.scientific_name||e.title||e.korean_name||"이름 없음";
+  return e.title||"제목 없음";
+}
+async function loadLexicon(){
+  S.lexicon=S.lexicon||[]; S.lexLinks=S.lexLinks||[];
+  const pageSize=1000;
+  try{
+    const entries=[];
+    for(let from=0;;from+=pageSize){
+      const {data,error}=await sb.from("glossary_entries").select("*")
+        .order("updated_at",{ascending:false}).order("id",{ascending:true})
+        .range(from,from+pageSize-1);
+      if(error) throw error;
+      const rows=data||[];
+      entries.push(...rows);
+      if(rows.length<pageSize) break;
+    }
+    const links=[];
+    for(let from=0;;from+=pageSize){
+      const {data,error}=await sb.from("glossary_taxa").select("entry_id,taxon_id")
+        .order("entry_id",{ascending:true}).order("taxon_id",{ascending:true})
+        .range(from,from+pageSize-1);
+      if(error) throw error;
+      const rows=data||[];
+      links.push(...rows);
+      if(rows.length<pageSize) break;
+    }
+    const byEntry=new Map(), byTaxon=new Map();
+    for(const row of links){
+      if(!byEntry.has(row.entry_id)) byEntry.set(row.entry_id,[]);
+      if(!byTaxon.has(row.taxon_id)) byTaxon.set(row.taxon_id,[]);
+      byEntry.get(row.entry_id).push(row.taxon_id);
+      byTaxon.get(row.taxon_id).push(row.entry_id);
+    }
+    S.lexicon=entries;
+    S.lexLinks=links;
+    S._lexHostsByEntry=byEntry;
+    S._lexEntriesByTaxon=byTaxon;
+    S._lexErr="";
+    return true;
+  }catch(e){
+    S._lexErr=e&&e.message||String(e);
+    return false;
+  }
+}
+function openLexiconTaxon(id){
+  if(!id||!S.taxa||!S.taxa[id]){ toast("이 도감에 없는 문서입니다"); return; }
+  S.segment="taxonomy"; S.view={kind:"taxon",id}; S.lexId=null; S.lexEdit=null; render();
+}
+function lexPhotoFields(box, draft){
+  draft.body_images=Array.isArray(draft.body_images)?draft.body_images:[];
+  box.appendChild(el(`<div class="side-title" style="margin-top:.5rem">프로필 사진</div>`));
+  const prev=el(`<div class="guide-thumb" style="width:88px;height:88px;margin:.3rem 0">${draft.profile_image_url?`<img src="${esc(draft.profile_image_url)}" alt=""/>`:`<span class="guide-x">✕</span>`}</div>`);
+  const row=el(`<div style="display:flex;gap:.4rem;flex-wrap:wrap"></div>`);
+  const file=el(`<label class="btn btn-line" style="min-height:32px">사진 선택<input type="file" accept="image/*" hidden></label>`);
+  file.querySelector("input").onchange=async(e)=>{
+    const f=e.target.files&&e.target.files[0]; if(!f) return;
+    if(f.size>8e6){ toast("8MB 이하로"); return; }
+    try{
+      toast("사진 최적화 중…");
+      let data=await compressImageFile(f, 1024, 0.84);
+      if(data.length>480000) data=await compressImageFile(f, 1024, 0.72);
+      draft.profile_image_url=data; prev.innerHTML=`<img src="${data}" alt=""/>`;
+    }catch(err){ toast("사진을 처리하지 못했습니다"); }
+  };
+  const clear=el(`<button type="button" class="btn btn-ghost" style="min-height:32px">빼기</button>`);
+  clear.onclick=()=>{ draft.profile_image_url=""; prev.innerHTML=`<span class="guide-x">✕</span>`; };
+  row.appendChild(file); row.appendChild(clear);
+  box.appendChild(prev); box.appendChild(row);
+  box.appendChild(el(`<div class="side-title" style="margin-top:.7rem">본문 사진</div><p class="muted" style="font-size:.75rem;margin:.15rem 0 .35rem">[[파일:0]] 형식으로 본문에 넣으세요.</p>`));
+  const blist=el(`<div></div>`);
+  const paint=()=>{
+    blist.innerHTML="";
+    if(!draft.body_images.length) blist.appendChild(el(`<div class="empty">없음</div>`));
+    draft.body_images.forEach((im,i)=>{
+      const url=typeof im==="string"?im:(im&&im.url)||"";
+      const item=el(`<div style="display:flex;align-items:center;gap:.45rem;margin:.35rem 0"><span class="guide-thumb">${url?`<img src="${esc(url)}" alt=""/>`:`<span class="guide-x">✕</span>`}</span><code style="font-size:.75rem">[[파일:${i}]]</code></div>`);
+      const rm=el(`<button type="button" class="btn btn-line" style="min-height:28px;font-size:.72rem">빼기</button>`);
+      rm.onclick=()=>{ draft.body_images.splice(i,1); paint(); };
+      item.appendChild(rm); blist.appendChild(item);
+    });
+  };
+  paint();
+  const add=el(`<label class="btn btn-line" style="min-height:32px;margin-top:.35rem">본문 사진 추가<input type="file" accept="image/*" hidden></label>`);
+  add.querySelector("input").onchange=async(e)=>{
+    const f=e.target.files&&e.target.files[0]; if(!f) return;
+    if(f.size>8e6){ toast("8MB 이하로"); return; }
+    try{
+      toast("사진 최적화 중…");
+      let data=await compressImageFile(f, 1024, 0.84);
+      if(data.length>520000) data=await compressImageFile(f, 1024, 0.72);
+      draft.body_images.push({url:data, caption:""}); paint();
+    }catch(err){ toast("사진을 처리하지 못했습니다"); }
+  };
+  box.appendChild(blist); box.appendChild(add);
+}
+function lexTaxonPicker(box, draft){
+  draft.taxa=draft.taxa||lexHosts(draft.id);
+  const chosen=el(`<div></div>`);
+  const paint=()=>{
+    chosen.innerHTML="";
+    if(!draft.taxa.length) chosen.appendChild(el(`<div class="empty">연결된 계통 없음</div>`));
+    draft.taxa.forEach(id=>{
+      const t=S.taxa&&S.taxa[id];
+      const row=el(`<div class="list-btn" style="display:flex;justify-content:space-between;align-items:center;gap:.4rem"><span><em style="font-family:var(--serif)">${esc(t?displaySciName(t):id)}</em> <span class="muted">${esc(t&&t.koreanName||"")}</span></span></div>`);
+      const rm=el(`<button type="button" class="btn btn-line" style="min-height:28px;font-size:.72rem">빼기</button>`);
+      rm.onclick=()=>{ draft.taxa=draft.taxa.filter(x=>x!==id); paint(); };
+      row.appendChild(rm); chosen.appendChild(row);
+    });
+  };
+  paint();
+  const q=el(`<input placeholder="관련 계통 검색" autocomplete="off" style="width:100%;margin:.35rem 0"/>`);
+  const hits=el(`<div></div>`);
+  q.oninput=()=>{
+    const s=q.value.trim().toLowerCase();
+    hits.innerHTML="";
+    if(s.length<1) return;
+    const order={superfamily:0,infraorder:1,suborder:2,order:3,family:4,clade:5,genus:6,species:8};
+    Object.values(S.taxa||{}).filter(t=>((t.scientificName||"")+" "+(t.koreanName||"")+" "+(t.rank||"")).toLowerCase().includes(s) && (typeof SITE_KIND==="undefined" || SITE_KIND!=="korean" || isBrachyura(t))).sort((a,b)=>{
+      const an=String(a.scientificName||"").toLowerCase(), bn=String(b.scientificName||"").toLowerCase();
+      const ap=an===s||an.startsWith(s)?0:1, bp=bn===s||bn.startsWith(s)?0:1;
+      if(ap!==bp) return ap-bp;
+      return (order[a.rank]??9)-(order[b.rank]??9);
+    }).slice(0,12).forEach(t=>{
+      const rk=LEX_RANK_KO[t.rank]||t.rank||"";
+      const b=el(`<button type="button" class="list-btn"><em style="font-family:var(--serif)">${esc(displaySciName(t))}</em> <span class="muted">${esc(t.koreanName||"")} · ${esc(rk)}</span></button>`);
+      b.onclick=()=>{
+        if(!draft.taxa.includes(t.id)) draft.taxa.push(t.id);
+        const gid=lexAutoGroup(t);
+        if(gid){ draft.groups=draft.groups||[]; if(!draft.groups.includes(gid)) draft.groups.push(gid); if(typeof draft._paintGroups==="function") draft._paintGroups(); }
+        q.value=""; hits.innerHTML=""; paint();
+      };
+      hits.appendChild(b);
+    });
+  };
+  const hold=el(`<div id="lx-taxa"></div>`);
+  hold.appendChild(el(`<div class="side-title" style="margin-top:.7rem">${isSymKind(draft.kind)?"숙주":"관련 계통"}</div>`));
+  hold.appendChild(chosen); hold.appendChild(q); hold.appendChild(hits);
+  box.appendChild(hold);
+  draft._paintTaxa=paint;
+}
+function viewLexiconEditor(draft){
+  const panel=el(`<div class="panel"></div>`);
+  panel.appendChild(el(`<h2 class="gold" style="font-family:var(--serif);margin-top:0">${draft.isNew?"용어 작성":"용어 수정"}</h2>`));
+  const kindOpts=isSymKind(draft.kind)?SYM_KINDS:LEX_KINDS;
+  panel.appendChild(el(`<label class="field"><span>분류</span><select id="lxkind">${kindOpts.map(k=>`<option value="${k.id}" ${draft.kind===k.id?"selected":""}>${esc(k.label)}</option>`).join("")}</select></label>`));
+  draft.groups=lexGroups(draft);
+  if(draft.isNew && (!draft.groups || !draft.groups.length) && typeof SITE_KIND!=="undefined" && SITE_KIND==="korean"){
+    const brachy = visibleLexGroups().find(g => /brachyura|게/i.test(g.sci||g.label||""));
+    if(brachy) draft.groups=[brachy.id];
+  }
+  const gbox=el(`<div class="field"><span>소분류</span><div style="display:flex;flex-wrap:wrap;gap:.35rem;margin-top:.3rem"></div></div>`);
+  const grows=gbox.querySelector("div");
+  const paintGroups=()=>{
+    grows.innerHTML="";
+    visibleLexGroups().forEach(g=>{
+    const on=draft.groups.includes(g.id);
+    const b=el(`<button type="button" class="btn ${on?"btn-gold":"btn-line"}" style="min-height:30px;font-size:.75rem">${esc(g.label)}</button>`);
+    b.onclick=()=>{
+      const turningOn=!draft.groups.includes(g.id);
+      draft.groups=turningOn?draft.groups.concat(g.id):draft.groups.filter(x=>x!==g.id);
+      b.className="btn "+(draft.groups.includes(g.id)?"btn-gold":"btn-line");
+      if(!turningOn) return;
+      const kind=panel.querySelector("#lxkind")&&panel.querySelector("#lxkind").value;
+      if(g.id==="other"){
+        const box=panel.querySelector("#lx-taxa");
+        if(box){
+          box.classList.add("lex-nudge");
+          box.scrollIntoView({behavior:"smooth", block:"center"});
+          setTimeout(()=>box.classList.remove("lex-nudge"), 1800);
+        }
+        return;
+      }
+      if(kind==="body" && g.taxon){
+        draft.taxa=[g.taxon];
+        if(typeof draft._paintTaxa==="function") draft._paintTaxa();
+      }
+    };
+    grows.appendChild(b);
+    });
+  };
+  paintGroups();
+  draft._paintGroups=paintGroups;
+  panel.appendChild(gbox);
+  const term=el(`<div id="lxterm"></div>`);
+  const sym=el(`<div id="lxsym"></div>`);
+  const paintKind=()=>{
+    const kind=panel.querySelector("#lxkind").value;
+    term.style.display=isSymKind(kind)?"none":"";
+    sym.style.display=isSymKind(kind)?"":"none";
+  };
+  term.appendChild(el(`<label class="field"><span>표제어 *</span><input id="lxtitle" value="${esc(draft.title||"")}" autocomplete="off"/></label>`));
+  term.appendChild(el(`<label class="field"><span>국명</span><input id="lxko-term" value="${esc(draft.korean_name||"")}" placeholder="턱다리" autocomplete="off"/></label>`));
+  sym.appendChild(el(`<label class="field"><span>학명 *</span><input id="lxsci" value="${esc(draft.scientific_name||"")}" autocomplete="off"/></label>`));
+  sym.appendChild(el(`<label class="field"><span>국명</span><input id="lxko" value="${esc(draft.korean_name||"")}" autocomplete="off"/></label>`));
+  sym.appendChild(el(`<label class="field"><span>계급</span><select id="lxrank">${LEX_RANKS.map(r=>`<option value="${r}" ${(draft.rank||"species")===r?"selected":""}>${LEX_RANK_KO[r]}</option>`).join("")}</select></label>`));
+  const parentLab=el(`<div class="muted" style="font-size:.8rem;margin:.2rem 0 .35rem">상위: ${esc((lexOf(draft.parent_id)&&lexTitle(lexOf(draft.parent_id)))||"없음")}</div>`);
+  const pq=el(`<input placeholder="상위 공생·기생체 검색" autocomplete="off" style="width:100%;margin:.2rem 0"/>`);
+  const ph=el(`<div></div>`);
+  pq.oninput=()=>{
+    const s=pq.value.trim().toLowerCase(); ph.innerHTML="";
+    if(!s) return;
+    (S.lexicon||[]).filter(x=>isSymKind(x.kind)&&x.id!==draft.id&&lexTitle(x).toLowerCase().includes(s)).slice(0,8).forEach(x=>{
+      const b=el(`<button type="button" class="list-btn">${esc(lexTitle(x))} <span class="muted">${esc(x.korean_name||"")}</span></button>`);
+      b.onclick=()=>{ draft.parent_id=x.id; parentLab.textContent="상위: "+lexTitle(x); pq.value=""; ph.innerHTML=""; };
+      ph.appendChild(b);
+    });
+  };
+  const clearP=el(`<button type="button" class="btn btn-ghost" style="min-height:32px;margin-top:.3rem">상위 빼기</button>`);
+  clearP.onclick=()=>{ draft.parent_id=""; parentLab.textContent="상위: 없음"; };
+  sym.appendChild(parentLab); sym.appendChild(pq); sym.appendChild(ph); sym.appendChild(clearP);
+  panel.appendChild(term); panel.appendChild(sym);
+  panel.querySelector("#lxkind").onchange=paintKind; paintKind();
+  panel.appendChild(el(`<label class="field"><span>본문</span><textarea id="lxbody" rows="12" style="width:100%;min-height:180px">${esc(draft.body||"")}</textarea></label>`));
+  lexPhotoFields(panel, draft);
+  lexTaxonPicker(panel, draft);
+  const row=el(`<div style="display:flex;flex-direction:column;gap:.45rem;margin-top:.7rem"></div>`);
+  const save=el(`<button type="button" class="btn btn-gold">저장</button>`);
+  const cancel=el(`<button type="button" class="btn btn-ghost">취소</button>`);
+  save.onclick=async()=>{
+    if(!S.session||!S.session.user){ toast("로그인이 필요합니다"); return; }
+    const kind=panel.querySelector("#lxkind").value;
+    const body=(panel.querySelector("#lxbody").value||"").trim();
+    const sym=isSymKind(kind);
+    const title=sym?(panel.querySelector("#lxsci").value||"").trim():(panel.querySelector("#lxtitle").value||"").trim();
+    if(!title){ toast(sym?"학명을 입력하세요":"표제어를 입력하세요"); return; }
+    const existLex = (S.lexicon||[]).find(x => x.id !== draft.id && ((String(x.title||"").trim().toLowerCase() === title.toLowerCase()) || (String(x.scientific_name||"").trim().toLowerCase() === title.toLowerCase())));
+    if(existLex){ toast("이미 있는 용어입니다"); S.lexEdit=null; S.lexId=existLex.id; render(); return; }
+    const profile=await materializeImageUrl(draft.profile_image_url||"", "guides");
+    const bodyImgs=[];
+    for(const im of (draft.body_images||[])){
+      const raw=typeof im==="string"?im:(im&&im.url)||"";
+      if(!raw) continue;
+      bodyImgs.push({url:await materializeImageUrl(raw, "guides"), caption:(im&&im.caption)||""});
+    }
+    const rec={
+      id:draft.id, kind, title:kind==="symbiont"?title:title, body,
+      scientific_name:sym?title:null,
+      korean_name:sym?(panel.querySelector("#lxko").value||"").trim():((panel.querySelector("#lxko-term")&&panel.querySelector("#lxko-term").value)||"").trim()||null,
+      rank:sym?(panel.querySelector("#lxrank").value||"species"):null,
+      parent_id:sym?(draft.parent_id||null):null,
+      profile_image_url:profile||null, body_images:bodyImgs,
+      groups:JSON.stringify(draft.groups||[]),
+      author_id:draft.author_id||S.session.user.id,
+      author_name:draft.author_name||displayName().slice(0,24),
+      updated_at:new Date().toISOString()
+    };
+    try{
+      let {error}=await sb.from("glossary_entries").upsert(rec);
+      if(error && /groups/i.test(error.message||"")){
+        const {groups, ...rest}=rec;
+        const r2=await sb.from("glossary_entries").upsert(rest);
+        error=r2.error;
+      }
+      if(error) throw error;
+      const {error:linkDeleteError}=await sb.from("glossary_taxa").delete().eq("entry_id", draft.id);
+      if(linkDeleteError) throw linkDeleteError;
+      if(draft.taxa&&draft.taxa.length){
+        const {error:e2}=await sb.from("glossary_taxa").insert(draft.taxa.map(taxon_id=>({entry_id:draft.id, taxon_id})));
+        if(e2) throw e2;
+      }
+      S.lexEdit=null; S.lexKind=kind;
+      const refreshed=await loadLexicon();
+      if(!refreshed){
+        S.lexId=null;
+        toast("저장은 완료됐지만 용어 목록을 다시 불러오지 못했습니다");
+        render();
+        return;
+      }
+      S.lexId=draft.id;
+      toast("저장됨"); render();
+    }catch(e){ alert((e&&e.message)||e); }
+  };
+  cancel.onclick=()=>{ S.lexEdit=null; render(); };
+  row.appendChild(save); row.appendChild(cancel); panel.appendChild(row);
+  return panel;
+}
+function viewLexiconDetail(id){
+  const e=lexOf(id);
+  const w=el(`<div class="panel"></div>`);
+  if(!e){ w.appendChild(el(`<p>항목을 찾을 수 없습니다.</p>`)); return w; }
+  if(isSymKind(e.kind)){
+    const chain=[]; let cur=e, g=0;
+    while(cur&&g++<12){ chain.unshift(cur); cur=cur.parent_id?lexOf(cur.parent_id):null; }
+    if(chain.length>1){
+      const crumb=el(`<div class="muted" style="font-size:.8rem;margin-bottom:.35rem"></div>`);
+      chain.slice(0,-1).forEach((c,i)=>{
+        if(i) crumb.appendChild(document.createTextNode(" > "));
+        const a=el(`<button type="button" class="btn-link">${esc(lexTitle(c))}</button>`);
+        a.onclick=()=>{ S.lexId=c.id; render(); };
+        crumb.appendChild(a);
+      });
+      w.appendChild(crumb);
+    }
+    w.appendChild(el(`<h1 style="font-style:italic;font-family:var(--serif);margin:.1rem 0 .15rem">${esc(e.scientific_name||e.title||"")}</h1>`));
+    if(e.korean_name) w.appendChild(el(`<div style="margin-bottom:.35rem">${esc(e.korean_name)}</div>`));
+    w.appendChild(el(`<div class="muted" style="font-size:.8rem;margin-bottom:.5rem">${esc(LEX_RANK_KO[e.rank]||e.rank||"")}</div>`));
+  }else{
+    w.appendChild(el(`<div class="muted" style="font-size:.78rem">${esc(lexKindLabel(e.kind))}</div>`));
+    w.appendChild(el(`<h1 style="font-style:normal;margin:.1rem 0 .4rem">${esc(e.title||"")}${e.korean_name?`, ${esc(e.korean_name)}`:""}</h1>`));
+  }
+  if(e.profile_image_url) w.appendChild(el(`<img src="${esc(e.profile_image_url)}" alt="" style="width:100%;max-width:420px;border-radius:8px;margin:.2rem 0 .6rem"/>`));
+  w.appendChild(buildWikiDom({id:e.id, description:e.body||"", bodyImages:e.body_images||[], _bodyLoaded:true, _isLex:true}));
+  const hosts=lexHosts(e.id);
+  if(hosts.length){
+    w.appendChild(el(`<h2 style="margin-top:1rem">${isSymKind(e.kind)?"숙주":"관련 계통"}</h2>`));
+    hosts.forEach(tid=>{
+      const t=S.taxa&&S.taxa[tid];
+      const b=el(`<button type="button" class="list-btn"><em style="font-family:var(--serif)">${esc(t?displaySciName(t):tid)}</em> <span class="muted">${esc(t&&t.koreanName||"")}</span></button>`);
+      b.onclick=()=>openLexiconTaxon(tid);
+      w.appendChild(b);
+    });
+  }
+  if(isSymKind(e.kind)){
+    const kids=lexKids(e.id);
+    if(kids.length){
+      w.appendChild(el(`<h2 style="margin-top:1rem">하위 계통</h2>`));
+      kids.forEach(k=>{
+        const b=el(`<button type="button" class="list-btn"><em style="font-family:var(--serif)">${esc(lexTitle(k))}</em> <span class="muted">${esc(k.korean_name||"")}</span></button>`);
+        b.onclick=()=>{ S.lexId=k.id; render(); };
+        w.appendChild(b);
+      });
+    }
+  }
+  const bar=el(`<div style="display:flex;flex-direction:column;gap:.4rem;margin-top:.8rem"></div>`);
+  const back=el(`<button type="button" class="btn btn-ghost">목록</button>`);
+  back.onclick=()=>{
+    S.lexEdit=null;
+    if(S.navStack && S.navIndex>0){ goNav(-1); return; }
+    S.lexId=null;
+    render();
+  };
+  bar.appendChild(back);
+  const mine=S.session&&S.session.user&&e.author_id===S.session.user.id;
+  if(mine||isAdmin()){
+    const ed=el(`<button type="button" class="btn btn-line">수정</button>`);
+    ed.onclick=()=>{ S.lexEdit=Object.assign({taxa:lexHosts(e.id)}, e); render(); };
+    const del=el(`<button type="button" class="btn btn-line">삭제</button>`);
+    del.onclick=async()=>{
+      if(!confirm("이 항목을 지울까요?")) return;
+      const {error:linkDeleteError}=await sb.from("glossary_taxa").delete().eq("entry_id", e.id);
+      if(linkDeleteError){ alert(linkDeleteError.message); return; }
+      const {error}=await sb.from("glossary_entries").delete().eq("id", e.id);
+      if(error){ alert(error.message); return; }
+      S.lexId=null;
+      const refreshed=await loadLexicon();
+      if(!refreshed) toast("삭제는 완료됐지만 용어 목록 새로고침에 실패했습니다");
+      render();
+    };
+    bar.appendChild(ed); bar.appendChild(del);
+  }
+  w.appendChild(bar);
+  return w;
+}
+function viewLexiconList(mode){
+  const sym=mode==="sym";
+  const kinds=sym?SYM_KINDS:LEX_KINDS;
+  const kind=sym?(S.symKind||"pathogen"):(S.lexKind||"body");
+  const w=el(`<div></div>`);
+  w.appendChild(el(`<h1 style="font-style:normal;margin:.1rem 0 .35rem">${sym?"공생·기생":"용어사전"}</h1>`));
+  w.appendChild(el(`<p class="muted" style="font-size:.8rem;margin:0 0 .55rem">${sym?"병원체, 기생성 등각류·만각류, 브랜키오델리다 등을 계통별로 모읍니다.":"신체 부위, 발생·생리, 행동 용어를 모읍니다."}</p>`));
+  if(S._lexErr) w.appendChild(el(`<div class="panel"><p class="muted">사전 표를 아직 만들지 않았습니다. SQL을 실행한 뒤 새로고침하세요.</p></div>`));
+  const tabs=el(`<div class="tabs-mini" style="margin:0 0 .55rem;flex-wrap:wrap;gap:.35rem"></div>`);
+  kinds.forEach(k=>{
+    const on=kind===k.id;
+    const b=el(`<button type="button" class="btn ${on?"btn-gold":"btn-line"}" style="min-height:32px">${esc(k.label)}</button>`);
+    b.onclick=()=>{ if(sym) S.symKind=k.id; else S.lexKind=k.id; S.lexId=null; render(); };
+    tabs.appendChild(b);
+  });
+  w.appendChild(tabs);
+  const write=el(`<button type="button" class="btn btn-gold" style="margin-bottom:.55rem">추가</button>`);
+  write.onclick=()=>{
+    if(!S.session||!S.session.user){ toast("로그인이 필요합니다"); return; }
+    S.lexEdit={isNew:true, id:"lex-"+Date.now(), kind, title:"", body:"", body_images:[], taxa:[], parent_id:"", rank:sym?"species":null};
+    render();
+  };
+  w.appendChild(write);
+  const search=el(`<input placeholder="검색" value="${esc(S.lexQ||"")}" autocomplete="off" style="width:100%;margin:0 0 .5rem" aria-label="용어사전 검색"/>`);
+  w.appendChild(search);
+  const results=el(`<div class="lex-search-results"></div>`);
+  w.appendChild(results);
+  const paintResults=()=>{
+    results.innerHTML="";
+    let list=(S.lexicon||[]).filter(e=>e.kind===kind);
+    const q=(S.lexQ||"").trim().toLowerCase();
+    if(q) list=list.filter(e=>(lexTitle(e)+" "+(e.korean_name||"")+" "+(e.body||"")).toLowerCase().includes(q));
+    if(sym && !q){
+      const draw=(parent, depth)=>{
+        list.filter(e=>(e.parent_id||"")===parent).forEach(e=>{
+          const b=el(`<button type="button" class="list-btn" style="padding-left:${.7+depth*0.8}rem"><em style="font-family:var(--serif)">${esc(lexTitle(e))}</em> <span class="muted">${esc(e.korean_name||"")} · ${esc(LEX_RANK_KO[e.rank]||"")}</span></button>`);
+          b.onclick=()=>{ S.lexId=e.id; render(); };
+          results.appendChild(b);
+          draw(e.id, depth+1);
+        });
+      };
+      draw("", 0);
+      list.filter(e=>e.parent_id && !lexOf(e.parent_id)).forEach(e=>{
+        const b=el(`<button type="button" class="list-btn"><em style="font-family:var(--serif)">${esc(lexTitle(e))}</em></button>`);
+        b.onclick=()=>{ S.lexId=e.id; render(); };
+        results.appendChild(b);
+      });
+    }else{
+      if(!list.length) results.appendChild(el(`<div class="empty">아직 없습니다</div>`));
+      list.forEach(e=>{
+        const b=el(`<button type="button" class="list-btn"><strong>${esc(lexTitle(e))}</strong> ${e.korean_name?`<span class="muted">${esc(e.korean_name)}</span>`:""}</button>`);
+        b.onclick=()=>{ S.lexId=e.id; render(); };
+        results.appendChild(b);
+      });
+    }
+  };
+  search.oninput=()=>{ S.lexQ=search.value; paintResults(); };
+  paintResults();
+  return w;
+}
+function viewLexicon(){
+  if(S.lexEdit) return viewLexiconEditor(S.lexEdit);
+  if(S.lexId) return viewLexiconDetail(S.lexId);
+  const w=el(`<div></div>`);
+  w.appendChild(el(`<h1 style="font-style:normal;margin:.1rem 0 .35rem">용어사전</h1>`));
+  w.appendChild(el(`<p class="muted" style="font-size:.8rem;margin:0 0 .55rem">용어와 공생·기생체를 문단별로 모읍니다. 소분류는 여러 개 겹칠 수 있습니다.</p>`));
+  const gbar=el(`<div class="tabs-mini" style="margin:0 0 .55rem;flex-wrap:wrap;gap:.35rem"></div>`);
+  visibleLexGroups().forEach(g=>{
+    const on=S.lexGroup===g.id;
+    const b=el(`<button type="button" class="btn ${on?"btn-gold":"btn-line"}" style="min-height:30px">${esc(g.label)}</button>`);
+    b.onclick=()=>{ S.lexGroup=on?"":g.id; render(); };
+    gbar.appendChild(b);
+  });
+  w.appendChild(gbar);
+  if(S._lexErr) w.appendChild(el(`<div class="panel"><p class="muted">사전 표를 아직 만들지 않았습니다. SQL을 실행한 뒤 새로고침하세요.</p></div>`));
+  const search=el(`<input placeholder="검색" value="${esc(S.lexQ||"")}" autocomplete="off" style="width:100%;margin:0 0 .7rem" aria-label="용어사전 검색"/>`);
+  w.appendChild(search);
+  const results=el(`<div class="lex-search-results"></div>`);
+  w.appendChild(results);
+  const paintResults=()=>{
+    results.innerHTML="";
+    const q=(S.lexQ||"").trim().toLowerCase();
+  const groups=[{title:"용어", kinds:LEX_KINDS},{title:"바이러스·기생충·공생체", kinds:SYM_KINDS}];
+  groups.forEach(group=>{
+    results.appendChild(el(`<h2 style="margin:1rem 0 .4rem">${esc(group.title)}</h2>`));
+    group.kinds.forEach(k=>{
+      let list=(S.lexicon||[]).filter(e=>e.kind===k.id);
+      if(S.lexGroup) list=list.filter(e=>lexMatchesGroup(e, S.lexGroup));
+      else if(typeof SITE_KIND!=="undefined" && SITE_KIND==="korean"){
+        const brachyIds = visibleLexGroups().map(g=>g.id);
+        list=list.filter(e=>{
+          const gs = lexEffectiveGroups(e);
+          return !gs.length || gs.some(g=>brachyIds.includes(g));
+        });
+      }
+      if(q) list=list.filter(e=>(lexTitle(e)+" "+(e.korean_name||"")+" "+(e.body||"")).toLowerCase().includes(q));
+      if(isSymKind(k.id)){
+        const hosts=[...new Set(list.flatMap(e=>lexHosts(e.id)))];
+        if(hosts.length){
+          const hbar=el(`<div class="tabs-mini" style="margin:.15rem 0 .35rem;flex-wrap:wrap;gap:.3rem"></div>`);
+          hosts.slice(0,18).forEach(hid=>{
+            const t=S.taxa&&S.taxa[hid];
+            const on=S.lexHost===hid;
+            const b=el(`<button type="button" class="btn ${on?"btn-gold":"btn-line"}" style="min-height:28px;font-size:.72rem">${esc(t?displaySciName(t):(t&&t.koreanName)||hid)}</button>`);
+            b.onclick=()=>{ S.lexHost=on?"":hid; render(); };
+            hbar.appendChild(b);
+          });
+          results.appendChild(hbar);
+        }
+        if(S.lexHost) list=list.filter(e=>lexHosts(e.id).includes(S.lexHost));
+      }
+      const head=el(`<div style="display:flex;justify-content:space-between;align-items:center;gap:.4rem;margin:.55rem 0 .25rem"><h3 style="margin:0;font-size:1rem">${esc(k.label)}</h3></div>`);
+      const add=el(`<button type="button" class="btn btn-line" style="min-height:28px;font-size:.72rem">추가</button>`);
+      add.onclick=()=>{
+        if(!S.session||!S.session.user){ toast("로그인이 필요합니다"); return; }
+        S.lexEdit={isNew:true, id:"lex-"+Date.now(), kind:k.id, title:"", body:"", body_images:[], taxa:[], parent_id:"", rank:isSymKind(k.id)?"species":null};
+        render();
+      };
+      head.appendChild(add); results.appendChild(head);
+      if(!list.length){ results.appendChild(el(`<div class="empty">없음</div>`)); return; }
+      if(isSymKind(k.id) && !q){
+        const draw=(parent, depth)=>{
+          list.filter(e=>(e.parent_id||"")===parent).forEach(e=>{
+            const b=el(`<button type="button" class="list-btn" style="padding-left:${.7+depth*0.8}rem"><em style="font-family:var(--serif)">${esc(lexTitle(e))}</em> <span class="muted">${esc(e.korean_name||"")}</span></button>`);
+            b.onclick=()=>{ S.lexId=e.id; render(); };
+            results.appendChild(b); draw(e.id, depth+1);
+          });
+        };
+        draw("", 0);
+        list.filter(e=>e.parent_id && !lexOf(e.parent_id)).forEach(e=>{
+          const b=el(`<button type="button" class="list-btn"><em style="font-family:var(--serif)">${esc(lexTitle(e))}</em></button>`);
+          b.onclick=()=>{ S.lexId=e.id; render(); };
+          results.appendChild(b);
+        });
+      }else{
+        list.forEach(e=>{
+          const b=el(`<button type="button" class="list-btn"><strong>${esc(lexTitle(e))}</strong>${e.korean_name?`, ${esc(e.korean_name)}`:""}</button>`);
+          b.onclick=()=>{ S.lexId=e.id; render(); };
+          results.appendChild(b);
+        });
+      }
+    });
+  });
+  };
+  search.oninput=()=>{ S.lexQ=search.value; paintResults(); };
+  paintResults();
+  return w;
+}
+function appendRelatedLexicon(panel, taxon){
+  if(!taxon) return;
+  const items=lexForTaxon(taxon.id);
+  if(!items.length) return;
+  const box=el(`<div></div>`);
+  items.forEach(e=>{
+    const b=el(`<button type="button" class="list-btn">${esc(lexKindLabel(e.kind))} · ${esc(lexTitle(e))}${e.korean_name?`, ${esc(e.korean_name)}`:""}</button>`);
+    b.onclick=()=>{ S.segment="lexicon"; S.view=null; S.lexId=e.id; S.lexEdit=null; render(); };
+    box.appendChild(b);
+  });
+  panel.appendChild(foldSection(items.some(e=>isSymKind(e.kind))&&items.some(e=>!isSymKind(e.kind))?"관련 용어·공생":(items.some(e=>isSymKind(e.kind))?"관련 공생·기생":"관련 용어"), items.length, box));
+}
+
 function viewGuides(){
   const w=el(`<div></div>`);
   if(S.guideId){ w.appendChild(viewGuideDetail(S.guideId)); return w; }
@@ -4086,6 +4761,7 @@ function viewTaxon(taxon){
     }
   }catch(e){}
   try{ appendRelatedGuides(panel, taxon); }catch(e){}
+  try{ appendRelatedLexicon(panel, taxon); }catch(e){}
   try{ appendDescendantCatalog(panel, taxon); }catch(e){}
   w.appendChild(panel); return w;
 }
@@ -6116,11 +6792,12 @@ function viewModal(){
   else if(m.type==="block"){ modal.innerHTML=`<h2 class="gold" style="font-family:var(--serif);margin-top:0">차단</h2><label class="field"><span>유형</span><select id="ty"><option value="user">user</option><option value="ip">ip</option></select></label><label class="field"><span>값</span><input id="tg"/></label><label class="field"><span>사유</span><textarea id="rs"></textarea></label><div style="display:flex;gap:.5rem;justify-content:flex-end"><button class="btn btn-ghost" id="c">취소</button><button class="btn btn-danger" id="go">차단</button></div>`; modal.querySelector("#c").onclick=close; modal.querySelector("#go").onclick=async()=>{ if(!isMod()) return; const ty=modal.querySelector("#ty").value,tg=modal.querySelector("#tg").value.trim(); let profile=null; if(ty==="user"){ const {data}=await sb.from("profiles").select("*").eq("id",tg).maybeSingle(); profile=data; } const deny=cannotBlock(profile,ty==="ip"?tg:null); if(deny) return alert(deny); const {error}=await sb.from("blocks").insert({target_type:ty,target_user_id:ty==="user"?tg:null,target_ip:ty==="ip"?tg:null,reason:modal.querySelector("#rs").value,created_by:S.session.user.id,active:true}); if(error) return alert(error.message); if(ty==="user") await sb.from("profiles").update({is_blocked:true,block_reason:modal.querySelector("#rs").value}).eq("id",tg); toast("차단"); close(); }; }
   else if(m.type==="sectionEdit"){
     const isGuide=m.kind==="guide";
-    const tax=isGuide?(S.guides||[]).find(x=>x.id===m.taxonId):S.taxa[m.taxonId];
+    const isLex=m.kind==="lex";
+    const tax=isGuide?(S.guides||[]).find(x=>x.id===m.taxonId):isLex?lexOf(m.taxonId):S.taxa[m.taxonId];
     if(!tax){ modal.innerHTML=`<p>문서 없음</p>`; modal.appendChild(Object.assign(el(`<button class="btn btn-ghost">닫기</button>`),{onclick:close})); }
-    else if(!isGuide && !tax._bodyLoaded){ modal.innerHTML=`<p class="muted">본문을 불러오는 중…</p>`; ensureTaxonBody(tax.id).then(()=>render()); }
+    else if(!isGuide && !isLex && !tax._bodyLoaded){ modal.innerHTML=`<p class="muted">본문을 불러오는 중…</p>`; ensureTaxonBody(tax.id).then(()=>render()); }
     else {
-      const src=isGuide?(tax.body||""):(tax.description||"");
+      const src=isGuide?(tax.body||""):isLex?(tax.body||""):(tax.description||"");
       const sections=parseWikiSections(src);
       const sec=sections[m.sectionIndex];
       if(!sec){ modal.innerHTML=`<p>문단 없음</p>`; }
@@ -6142,6 +6819,10 @@ function viewModal(){
           try{
             if(isGuide){
               const {error}=await sb.from("share_guides").update({body:desc, updated_at:new Date().toISOString()}).eq("id", tax.id);
+              if(error) throw error;
+              tax.body=desc;
+            } else if(isLex){
+              const {error}=await sb.from("glossary_entries").update({body:desc, updated_at:new Date().toISOString()}).eq("id", tax.id);
               if(error) throw error;
               tax.body=desc;
             } else {
